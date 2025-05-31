@@ -1,85 +1,126 @@
 import streamlit as st
 import pandas as pd
-import numpy as np # Added numpy
+import numpy as np
 from database import (
     connect_postgres, fetch_postgres_data,
     connect_elasticsearch, fetch_elasticsearch_data
 )
+from src.analysis_modules.profiling import (
+    get_series_summary_stats,
+    get_missing_values_summary,
+    perform_stationarity_test
+)
+from src.analysis_modules.decomposition import decompose_time_series
+from src.analysis_modules.anomalies import (
+    detect_anomalies_zscore,
+    detect_anomalies_iqr
+)
+import matplotlib.pyplot as plt # Ensure this is imported for plotting
+
 
 # --- Page Configuration ---
 st.set_page_config(page_title="Data Analyzer", layout="wide")
-
 st.title("Universal Data Analyzer 📊")
 
-# --- Global State (if needed, e.g. for caching connections or data) ---
+# --- Global State Initialization ---
 if 'db_conn' not in st.session_state:
     st.session_state.db_conn = None
+if 'data_df_original' not in st.session_state:
+    st.session_state.data_df_original = pd.DataFrame()
 if 'data_df' not in st.session_state:
     st.session_state.data_df = pd.DataFrame()
-if 'active_filters' not in st.session_state: # Initialize active_filters
+if 'active_filters' not in st.session_state:
+    st.session_state.active_filters = {}
+if 'time_series_specs' not in st.session_state:
+    st.session_state.time_series_specs = {
+        "id_cols": [], "timestamp_col": "None", "value_cols": [],
+        "selected_id": "None", "selected_value_col_for_analysis": "None",
+        "processed_series": None
+    }
+
+# --- Utility for resetting TS specs and temp columns ---
+def reset_ts_and_temp_cols():
+    temp_id_col_name = "_temp_unique_id_"
+    if temp_id_col_name in st.session_state.data_df_original.columns:
+        try:
+            del st.session_state.data_df_original[temp_id_col_name]
+        except KeyError: pass # Might have already been deleted by another path
+    if temp_id_col_name in st.session_state.data_df.columns:
+         try:
+            del st.session_state.data_df[temp_id_col_name]
+         except KeyError: pass
+
+
+    st.session_state.time_series_specs = {
+        "id_cols": [], "timestamp_col": "None", "value_cols": [],
+        "selected_id": "None", "selected_value_col_for_analysis": "None",
+        "processed_series": None
+    }
     st.session_state.active_filters = {}
 
 # --- Sidebar for Database Connection ---
 st.sidebar.header("Database Connection")
-db_type = st.sidebar.selectbox("Select Database Type", ["PostgreSQL", "Elasticsearch"])
+db_type = st.sidebar.selectbox("Select Database Type", ["PostgreSQL", "Elasticsearch"], key="db_type_select")
 
 if db_type == "PostgreSQL":
     st.sidebar.subheader("PostgreSQL Details")
-    pg_host = st.sidebar.text_input("Host", "localhost")
-    pg_port = st.sidebar.text_input("Port", "5432")
-    pg_dbname = st.sidebar.text_input("Database Name", "mydatabase")
-    pg_user = st.sidebar.text_input("User", "myuser")
-    pg_password = st.sidebar.text_input("Password", type="password")
-    pg_query = st.sidebar.text_area("SQL Query", "SELECT * FROM your_table_name LIMIT 100;")
+    pg_host = st.sidebar.text_input("Host", "localhost", key="pg_host")
+    pg_port = st.sidebar.text_input("Port", "5432", key="pg_port")
+    pg_dbname = st.sidebar.text_input("Database Name", "mydatabase", key="pg_dbname")
+    pg_user = st.sidebar.text_input("User", "myuser", key="pg_user")
+    pg_password = st.sidebar.text_input("Password", type="password", key="pg_password")
+    pg_query = st.sidebar.text_area("SQL Query", "SELECT * FROM your_table_name LIMIT 100;", key="pg_query")
 
-    if st.sidebar.button("Connect to PostgreSQL"):
+    if st.sidebar.button("Connect to PostgreSQL", key="pg_connect_btn"):
         st.session_state.db_conn = connect_postgres(pg_host, pg_port, pg_dbname, pg_user, pg_password)
         if st.session_state.db_conn:
             st.sidebar.success("Connected to PostgreSQL!")
-            st.session_state.active_filters = {} # Reset filters on new connection
-            st.session_state.data_df = pd.DataFrame() # Clear old data
+            st.session_state.data_df_original = pd.DataFrame()
+            st.session_state.data_df = pd.DataFrame()
+            reset_ts_and_temp_cols()
 
-    if st.sidebar.button("Fetch Data from PostgreSQL"):
+    if st.sidebar.button("Fetch Data from PostgreSQL", key="pg_fetch_btn"):
         if st.session_state.db_conn:
-            st.session_state.data_df = fetch_postgres_data(st.session_state.db_conn, pg_query)
-            st.session_state.active_filters = {} # Reset filters on new data
-            if not st.session_state.data_df.empty:
+            reset_ts_and_temp_cols()
+            st.session_state.data_df_original = fetch_postgres_data(st.session_state.db_conn, pg_query)
+            st.session_state.data_df = st.session_state.data_df_original.copy()
+            if not st.session_state.data_df_original.empty:
                 st.sidebar.success("Data fetched successfully!")
+            else:
+                st.sidebar.warning("No data returned from PostgreSQL.")
         else:
             st.sidebar.error("Not connected to PostgreSQL. Please connect first.")
 
 elif db_type == "Elasticsearch":
     st.sidebar.subheader("Elasticsearch Details")
+    es_hosts_str = st.sidebar.text_input("Host URL(s) (comma-separated)", "http://localhost:9200", key="es_hosts")
+    es_index = st.sidebar.text_input("Index Name", "my_index", key="es_index")
+    es_query_dsl_str = st.sidebar.text_area("Elasticsearch Query DSL (JSON)", '{\n  "query": {\n    "match_all": {}\n  }\n}', key="es_query")
 
-    # Directly ask for Host URL(s)
-    es_hosts_str = st.sidebar.text_input("Host URL(s) (comma-separated)", "http://localhost:9200")
-
-    es_index = st.sidebar.text_input("Index Name", "my_index")
-    es_query_dsl_str = st.sidebar.text_area("Elasticsearch Query DSL (JSON)", '{\n  "query": {\n    "match_all": {}\n  }\n}')
-
-    if st.sidebar.button("Connect to Elasticsearch"):
-        es_hosts_list = [h.strip() for h in es_hosts_str.split(',') if h.strip()] # Ensure no empty strings from multiple commas
-
-        if not es_hosts_list: # Check if the list is empty after stripping and filtering
+    if st.sidebar.button("Connect to Elasticsearch", key="es_connect_btn"):
+        es_hosts_list = [h.strip() for h in es_hosts_str.split(',') if h.strip()]
+        if not es_hosts_list:
             st.sidebar.error("Please enter valid Elasticsearch Host URL(s).")
-            st.session_state.db_conn = None # Ensure connection is reset
+            st.session_state.db_conn = None
         else:
             st.session_state.db_conn = connect_elasticsearch(hosts=es_hosts_list)
-            # connect_elasticsearch in database.py shows success/error messages via st.success/st.error
-            if st.session_state.db_conn: # If connection was successful
-                 st.session_state.active_filters = {}
-                 st.session_state.data_df = pd.DataFrame()
-            # No explicit else here because connect_elasticsearch handles st.error for failures
+            if st.session_state.db_conn:
+                st.session_state.data_df_original = pd.DataFrame()
+                st.session_state.data_df = pd.DataFrame()
+                reset_ts_and_temp_cols()
 
-    if st.sidebar.button("Fetch Data from Elasticsearch"):
+    if st.sidebar.button("Fetch Data from Elasticsearch", key="es_fetch_btn"):
         if st.session_state.db_conn:
             import json
             try:
                 query_body = json.loads(es_query_dsl_str)
-                st.session_state.data_df = fetch_elasticsearch_data(st.session_state.db_conn, es_index, query_body)
-                st.session_state.active_filters = {} # Reset filters
-                if not st.session_state.data_df.empty:
+                reset_ts_and_temp_cols()
+                st.session_state.data_df_original = fetch_elasticsearch_data(st.session_state.db_conn, es_index, query_body)
+                st.session_state.data_df = st.session_state.data_df_original.copy()
+                if not st.session_state.data_df_original.empty:
                     st.sidebar.success("Data fetched successfully!")
+                else:
+                    st.sidebar.warning("No data returned from Elasticsearch.")
             except json.JSONDecodeError:
                 st.sidebar.error("Invalid JSON in Elasticsearch Query DSL.")
             except Exception as e:
@@ -87,165 +128,307 @@ elif db_type == "Elasticsearch":
         else:
             st.sidebar.error("Not connected to Elasticsearch. Please connect first.")
 
-# --- Main Area for Data Display ---
-st.header("Loaded Data")
-df_display = st.session_state.data_df.copy() # Work with a copy for display and analysis
+# --- Time Series Settings (Sidebar) ---
+st.sidebar.header("Time Series Settings")
+temp_id_col_name = "_temp_unique_id_"
 
-if not df_display.empty:
-    st.dataframe(df_display)
-    st.info(f"Displaying {df_display.shape[0]} rows and {df_display.shape[1]} columns.")
+if not st.session_state.data_df_original.empty:
+    df_columns = st.session_state.data_df_original.columns.tolist()
+
+    current_id_cols = st.session_state.time_series_specs.get("id_cols", [])
+    st.session_state.time_series_specs["id_cols"] = st.sidebar.multiselect(
+        "Select Device/Entity ID Column(s) (Optional)",
+        options=df_columns,
+        default=[col for col in current_id_cols if col in df_columns],
+        key="ts_id_cols"
+    )
+
+    current_ts_col = st.session_state.time_series_specs.get("timestamp_col", "None")
+    ts_col_options = ["None"] + df_columns
+    st.session_state.time_series_specs["timestamp_col"] = st.sidebar.selectbox(
+        "Select Timestamp Column",
+        options=ts_col_options,
+        index=ts_col_options.index(current_ts_col) if current_ts_col in ts_col_options else 0,
+        key="ts_timestamp_col"
+    )
+
+    current_value_cols = st.session_state.time_series_specs.get("value_cols", [])
+    st.session_state.time_series_specs["value_cols"] = st.sidebar.multiselect(
+        "Select Value/Metric Column(s) to Analyze",
+        options=df_columns,
+        default=[col for col in current_value_cols if col in df_columns],
+        key="ts_value_cols"
+    )
+
+    if st.session_state.time_series_specs["timestamp_col"] != "None" and \
+       st.session_state.time_series_specs["value_cols"]:
+
+        unique_ids_display = ["Default Time Series"]
+
+        if st.session_state.time_series_specs["id_cols"]:
+            try:
+                df_for_ids = st.session_state.data_df_original
+                # Ensure temp_id_col_name is created on data_df_original if not present
+                if temp_id_col_name not in df_for_ids.columns or \
+                   not df_for_ids[temp_id_col_name].equals(df_for_ids[st.session_state.time_series_specs["id_cols"]].astype(str).agg('-'.join, axis=1)):
+                    st.session_state.data_df_original[temp_id_col_name] = df_for_ids[st.session_state.time_series_specs["id_cols"]].astype(str).agg('-'.join, axis=1)
+
+                unique_ids_list = sorted(st.session_state.data_df_original[temp_id_col_name].unique().tolist())
+                unique_ids_display = ["None"] + unique_ids_list
+            except KeyError as e:
+                st.sidebar.warning(f"One or more ID columns not found: {e}. Please reselect.")
+                st.session_state.time_series_specs["id_cols"] = []
+
+        current_selected_id = st.session_state.time_series_specs.get("selected_id", "None")
+        st.session_state.time_series_specs["selected_id"] = st.sidebar.selectbox(
+            "Select a specific Device/Entity ID to analyze",
+            options=unique_ids_display,
+            index=unique_ids_display.index(current_selected_id) if current_selected_id in unique_ids_display else 0,
+            key="ts_selected_id"
+        )
+
+        valid_value_cols_for_selection = [col for col in st.session_state.time_series_specs["value_cols"] if col in df_columns]
+        value_col_options = ["None"] + valid_value_cols_for_selection
+        current_selected_value_col = st.session_state.time_series_specs.get("selected_value_col_for_analysis", "None")
+
+        st.session_state.time_series_specs["selected_value_col_for_analysis"] = st.sidebar.selectbox(
+            "Select a specific Value/Metric to analyze",
+            options=value_col_options,
+            index=value_col_options.index(current_selected_value_col) if current_selected_value_col in value_col_options else 0,
+            key="ts_selected_value_col"
+        )
+
+        if st.sidebar.button("Prepare Time Series for Analysis", key="ts_prepare_btn"):
+            ts_col = st.session_state.time_series_specs["timestamp_col"]
+            val_col = st.session_state.time_series_specs["selected_value_col_for_analysis"]
+            selected_entity_id = st.session_state.time_series_specs["selected_id"]
+
+            if selected_entity_id != "None" and ts_col != "None" and val_col != "None":
+                current_df_copy = st.session_state.data_df_original.copy()
+                entity_series_df = current_df_copy
+
+                if selected_entity_id != "Default Time Series":
+                    if temp_id_col_name in current_df_copy.columns:
+                        entity_series_df = current_df_copy[current_df_copy[temp_id_col_name] == selected_entity_id]
+                    else:
+                        st.sidebar.error("ID column for filtering not found. Reselect ID columns if changed.")
+                        st.session_state.time_series_specs["processed_series"] = None
+                        entity_series_df = pd.DataFrame() # Empty df to stop processing
+
+                if not entity_series_df.empty:
+                    try:
+                        entity_series_df[ts_col] = pd.to_datetime(entity_series_df[ts_col], errors='coerce')
+                        entity_series_df = entity_series_df.dropna(subset=[ts_col, val_col])
+
+                        if entity_series_df.empty:
+                            st.sidebar.error(f"No valid data after NA drop for {ts_col} or {val_col}.")
+                            st.session_state.time_series_specs["processed_series"] = None
+                        else:
+                            entity_series_df = entity_series_df.sort_values(by=ts_col)
+                            processed_series = entity_series_df.groupby(ts_col)[val_col].mean().rename(val_col)
+                            st.session_state.time_series_specs["processed_series"] = processed_series
+                            st.sidebar.success(f"Prepared '{val_col}' for '{selected_entity_id}'. Length: {len(processed_series)}")
+                    except Exception as e:
+                        st.sidebar.error(f"Error preparing series: {e}")
+                        st.session_state.time_series_specs["processed_series"] = None
+                elif st.session_state.time_series_specs["processed_series"] is not None : # only show if not already handled by inner empty check
+                    st.sidebar.error(f"No data found for ID: {selected_entity_id} with column {val_col}.")
+                    st.session_state.time_series_specs["processed_series"] = None
+            else:
+                st.sidebar.warning("Please select a valid Device/Entity ID, Timestamp, and Value/Metric.")
+                st.session_state.time_series_specs["processed_series"] = None
+    else:
+        st.sidebar.info("Select Timestamp and Value columns to enable detailed time series analysis options.")
+        if st.session_state.time_series_specs["processed_series"] is not None: # Clear if previously set
+            st.session_state.time_series_specs["processed_series"] = None
+
+        if temp_id_col_name in st.session_state.data_df_original.columns and \
+           (st.session_state.time_series_specs.get("timestamp_col", "None") == "None" or \
+            not st.session_state.time_series_specs.get("value_cols", [])):
+            try:
+                del st.session_state.data_df_original[temp_id_col_name]
+                if temp_id_col_name in st.session_state.data_df.columns:
+                     del st.session_state.data_df[temp_id_col_name]
+            except KeyError: pass
+
+
+elif not st.session_state.data_df_original.empty and temp_id_col_name in st.session_state.data_df_original.columns:
+     if (st.session_state.time_series_specs.get("timestamp_col", "None") == "None" or \
+        not st.session_state.time_series_specs.get("value_cols", [])):
+            try:
+                del st.session_state.data_df_original[temp_id_col_name]
+                if temp_id_col_name in st.session_state.data_df.columns:
+                     del st.session_state.data_df[temp_id_col_name]
+            except KeyError: pass
+else:
+    st.sidebar.info("Load data to configure time series settings.")
+
+# --- Main Area for Data Display ---
+st.header("Loaded Data Preview")
+if not st.session_state.data_df.empty:
+    st.dataframe(st.session_state.data_df.head())
+    st.info(f"Displaying preview of {st.session_state.data_df.shape[0]} rows and {st.session_state.data_df.shape[1]} columns.")
 else:
     st.info("No data loaded yet. Use the sidebar to connect to a database and fetch data.")
 
-# --- Data Analysis Section ---
-st.header("Data Analysis")
+# --- Display Processed Time Series (if available) ---
+processed_series_display = st.session_state.time_series_specs.get("processed_series")
+if processed_series_display is not None and not processed_series_display.empty:
+    st.header("Prepared Time Series for Analysis")
+    st.line_chart(processed_series_display)
+    st.write(processed_series_display.describe())
 
-if not st.session_state.data_df.empty: # Base analysis on original loaded data state for consistency
-    # df_display is already a copy from st.session_state.data_df
+# --- Time Series Analysis Modules ---
+if processed_series_display is not None and not processed_series_display.empty:
+    st.header("Time Series Analysis")
+    analysis_series = processed_series_display
+    series_name = analysis_series.name if analysis_series.name else "Value" # Ensure name exists
 
-    # 1. Descriptive Statistics
-    if st.checkbox("Show Summary Statistics"):
-        st.subheader("Summary Statistics")
-        st.write(st.session_state.data_df.describe(include='all')) # Show stats on original data
+    tab_profiling, tab_decomposition, tab_anomalies = st.tabs(["📊 Profiling", "📉 Decomposition", "❗ Anomaly Detection"])
 
-    # 2. Data Filtering
-    st.subheader("Filter Data")
-    # active_filters is already initialized in session state
+    with tab_profiling:
+        st.subheader(f"Profiling: {series_name}")
 
-    filter_cols_list = ["None"] + st.session_state.data_df.columns.tolist()
-    col_to_filter = st.selectbox("Select column to filter", filter_cols_list,
-                                 index=0,
-                                 key="filter_column_selector")
+        st.write("Summary Statistics (Processed Series):")
+        summary_df = get_series_summary_stats(analysis_series)
+        st.dataframe(summary_df)
 
-    if col_to_filter != "None":
-        selected_col_data = st.session_state.data_df[col_to_filter] # Filter based on original data
+        original_selected_series_for_profiling = pd.Series(dtype=float)
+        current_df_orig = st.session_state.data_df_original.copy()
+        selected_entity_id = st.session_state.time_series_specs["selected_id"]
+        ts_col_profiling = st.session_state.time_series_specs["timestamp_col"]
+        val_col_profiling = st.session_state.time_series_specs["selected_value_col_for_analysis"]
 
-        if pd.api.types.is_numeric_dtype(selected_col_data):
-            min_v, max_v = float(selected_col_data.min()), float(selected_col_data.max())
-            current_range = st.session_state.active_filters.get(col_to_filter, {}).get('range', (min_v, max_v))
-            if min_v < max_v:
-                chosen_range = st.slider(f"Filter {col_to_filter} between", min_v, max_v, current_range, key=f"filt_num_{col_to_filter}")
-                st.session_state.active_filters[col_to_filter] = {'type': 'numeric', 'range': chosen_range}
+        if selected_entity_id != "None" and ts_col_profiling != "None" and val_col_profiling != "None":
+            entity_df_orig = current_df_orig
+            if selected_entity_id != "Default Time Series":
+                if temp_id_col_name not in entity_df_orig.columns and st.session_state.time_series_specs["id_cols"]:
+                    entity_df_orig[temp_id_col_name] = entity_df_orig[st.session_state.time_series_specs["id_cols"]].astype(str).agg('-'.join, axis=1)
+                if temp_id_col_name in entity_df_orig.columns:
+                    entity_df_orig = entity_df_orig[entity_df_orig[temp_id_col_name] == selected_entity_id]
+
+            if not entity_df_orig.empty and val_col_profiling in entity_df_orig.columns and ts_col_profiling in entity_df_orig.columns:
+                entity_df_orig[ts_col_profiling] = pd.to_datetime(entity_df_orig[ts_col_profiling], errors='coerce')
+                # Important: For missing value analysis, we use the series *before* extensive NA dropping on value_col
+                # but after timestamp conversion and potential ID filtering.
+                temp_series_for_missing = entity_df_orig.dropna(subset=[ts_col_profiling]).set_index(ts_col_profiling)[val_col_profiling].sort_index()
+                original_selected_series_for_profiling = temp_series_for_missing.groupby(temp_series_for_missing.index).mean()
+
+
+        if not original_selected_series_for_profiling.empty:
+            st.write("Missing Values (Original Segment for Selected Metric):")
+            missing_df_orig = get_missing_values_summary(original_selected_series_for_profiling)
+            st.dataframe(missing_df_orig)
+        else:
+             st.warning("Original segment for full missing value profiling could not be retrieved. Processed series is already NA-handled for its values.")
+
+
+        st.write("Stationarity Test (ADF - on processed series):")
+        # analysis_series is the processed series, which had its values NA-dropped during groupby().mean()
+        adf_results = perform_stationarity_test(analysis_series)
+        if "error" in adf_results:
+            st.error(adf_results["error"])
+        else:
+            st.json(adf_results)
+
+    with tab_decomposition:
+        st.subheader(f"Decomposition: {series_name}")
+        decomp_model = st.selectbox("Decomposition Model", ["additive", "multiplicative"], key="decomp_model_select")
+
+        inferred_period = 1
+        if analysis_series.index.inferred_freq:
+            freq = analysis_series.index.inferred_freq
+            if 'D' in freq: inferred_period = 7
+            elif 'M' in freq or 'ME' in freq : inferred_period = 12
+            elif 'Q' in freq or 'QE' in freq: inferred_period = 4
+            elif 'H' in freq: inferred_period = 24
+
+        period_help_text = (f"Seasonality period. Suggested: {inferred_period}. Ensure series has min 2 full periods.")
+        decomp_period = st.number_input("Seasonal Period", min_value=2, value=inferred_period, help=period_help_text, key="decomp_period_num_input")
+
+        if st.button("Decompose Series", key="decomp_run_btn"):
+            if decomp_period and decomp_period >=2:
+                # Use analysis_series which is already cleaned of NaNs in values
+                decomposition_result, error_msg = decompose_time_series(analysis_series, model=decomp_model, period=decomp_period)
+                if error_msg:
+                    st.error(error_msg)
+                if decomposition_result:
+                    st.success("Decomposition successful.")
+                    st.line_chart(decomposition_result.observed.rename("Observed"))
+                    st.line_chart(decomposition_result.trend.rename("Trend"))
+                    st.line_chart(decomposition_result.seasonal.rename("Seasonal"))
+                    st.line_chart(decomposition_result.resid.rename("Residual"))
             else:
-                st.info(f"Column {col_to_filter} has a single unique numeric value ({min_v}) or is empty. No range filter applicable.")
-                if col_to_filter in st.session_state.active_filters:
-                     del st.session_state.active_filters[col_to_filter]
+                st.warning("Please provide a valid seasonal period (>=2).")
 
-        elif pd.api.types.is_bool_dtype(selected_col_data.dropna()): # Drop NA for bool checks
-            # Ensure correct handling if all are NA then it's not bool
-            if selected_col_data.dropna().empty:
-                 st.warning(f"Column {col_to_filter} contains only NA values after dropping. Cannot apply boolean filter.")
-                 if col_to_filter in st.session_state.active_filters: del st.session_state.active_filters[col_to_filter]
-            else:
-                options = ["Any", "True", "False"]
-                current_val_str = str(st.session_state.active_filters.get(col_to_filter, {}).get('value', "Any"))
-                idx = options.index(current_val_str) if current_val_str in options else 0
+    with tab_anomalies:
+        st.subheader(f"Anomaly Detection: {series_name}")
+        anomaly_method = st.selectbox("Detection Method", ["Z-score", "IQR"], key="anomaly_method_select")
 
-                choice = st.radio(f"Filter {col_to_filter}", options, index=idx, key=f"filt_bool_{col_to_filter}")
-                if choice == "Any":
-                    if col_to_filter in st.session_state.active_filters: del st.session_state.active_filters[col_to_filter]
-                else:
-                    st.session_state.active_filters[col_to_filter] = {'type': 'boolean', 'value': choice == "True"}
+        if anomaly_method == "Z-score":
+            z_threshold = st.number_input("Z-score Threshold", min_value=0.5, value=3.0, step=0.1, key="z_threshold_num_input")
+            z_window_options = [None, 5, 10, 15, 20, 30]
+            z_window = st.selectbox("Rolling Window (optional)", options=z_window_options, index=0, key="z_window_select", help="If None, global mean/std is used.")
 
-        else: # Categorical (object/string or other types treated as categorical)
-            unique_vals = selected_col_data.dropna().unique().tolist()
-            if not unique_vals:
-                st.warning(f"Column {col_to_filter} has no filterable unique values (all NaN or empty).")
-                if col_to_filter in st.session_state.active_filters: del st.session_state.active_filters[col_to_filter]
-            else:
-                # Convert all unique values to string to ensure type consistency for multiselect
-                unique_vals_str = sorted([str(v) for v in unique_vals])
+            if st.button("Detect Z-score Anomalies", key="zscore_run_btn"):
+                # analysis_series is already cleaned of NaNs in values
+                anomalies, z_scores, error_msg = detect_anomalies_zscore(analysis_series, threshold=z_threshold, window=z_window)
+                if error_msg:
+                    st.error(error_msg)
+                elif anomalies is not None:
+                    st.success(f"Z-score analysis complete. Found {anomalies.sum()} anomalies.")
+                    fig, ax = plt.subplots()
+                    ax.plot(analysis_series.index, analysis_series, label=series_name)
+                    ax.scatter(analysis_series.index[anomalies], analysis_series[anomalies], color='red', label='Anomalies', s=50, zorder=5)
+                    ax.set_title(f"{series_name} with Z-score Anomalies")
+                    ax.legend()
+                    plt.xticks(rotation=45)
+                    plt.tight_layout()
+                    st.pyplot(fig)
+                    if st.checkbox("Show Z-scores table for anomalies", key="zscore_table_cb"):
+                        st.dataframe(z_scores[anomalies].rename("Z-score of Anomaly"))
 
-                current_selection_raw = st.session_state.active_filters.get(col_to_filter, {}).get('values', [])
-                # Ensure current_selection is list of strings and valid
-                current_selection_str = [str(v) for v in current_selection_raw if str(v) in unique_vals_str]
+        elif anomaly_method == "IQR":
+            iqr_multiplier = st.number_input("IQR Multiplier", min_value=0.5, value=1.5, step=0.1, key="iqr_multiplier_num_input")
+            if st.button("Detect IQR Anomalies", key="iqr_run_btn"):
+                # analysis_series is already cleaned of NaNs in values
+                anomalies, bounds_info, error_msg = detect_anomalies_iqr(analysis_series, multiplier=iqr_multiplier)
+                if error_msg:
+                    st.error(error_msg)
+                elif anomalies is not None:
+                    st.success(f"IQR analysis complete. Found {anomalies.sum()} anomalies.")
+                    fig, ax = plt.subplots()
+                    ax.plot(analysis_series.index, analysis_series, label=series_name)
+                    ax.scatter(analysis_series.index[anomalies], analysis_series[anomalies], color='red', label='Anomalies', s=50, zorder=5)
 
+                    if bounds_info is not None:
+                        lower_b = bounds_info[bounds_info['Metric'] == 'Lower Bound']['Value'].iloc[0]
+                        upper_b = bounds_info[bounds_info['Metric'] == 'Upper Bound']['Value'].iloc[0]
+                        ax.axhline(lower_b, color='orange', linestyle='--', label=f'Lower Bound ({lower_b:.2f})')
+                        ax.axhline(upper_b, color='orange', linestyle='--', label=f'Upper Bound ({upper_b:.2f})')
 
-                chosen_values_str = st.multiselect(f"Filter {col_to_filter} by values", unique_vals_str, default=current_selection_str, key=f"filt_cat_{col_to_filter}")
-                # Store chosen values, potentially converting back to original types if strictly needed, but usually string comparison is fine.
-                # For simplicity, we'll store them as strings as chosen.
-                st.session_state.active_filters[col_to_filter] = {'type': 'categorical', 'values': chosen_values_str}
-
-    # Apply all active filters to df_display
-    if st.session_state.active_filters:
-        # df_display is already a copy of st.session_state.data_df
-        # We re-assign it here based on filtering the original st.session_state.data_df
-        df_filtered_display = st.session_state.data_df.copy()
-
-        for col, filt in st.session_state.active_filters.items():
-            if col not in df_filtered_display.columns: continue
-
-            if filt['type'] == 'numeric':
-                df_filtered_display = df_filtered_display[
-                    (df_filtered_display[col] >= filt['range'][0]) & (df_filtered_display[col] <= filt['range'][1])
-                ]
-            elif filt['type'] == 'boolean':
-                 # Handle potential NA values in boolean column if not dropped before filtering
-                df_filtered_display = df_filtered_display[df_filtered_display[col].fillna(False) == filt['value']]
-            elif filt['type'] == 'categorical':
-                # Ensure comparison is between strings if values are stored as strings
-                df_filtered_display = df_filtered_display[df_filtered_display[col].astype(str).isin(filt['values'])]
-
-        # Update df_display only if filters are active and change the data
-        if not df_filtered_display.equals(st.session_state.data_df):
-            st.write("Filtered Data Preview:")
-            st.dataframe(df_filtered_display.head())
-            st.info(f"Filtered data has {df_filtered_display.shape[0]} rows and {df_filtered_display.shape[1]} columns.")
-            df_display = df_filtered_display # This is the df that visualizations will use
-        elif df_filtered_display.empty and st.session_state.active_filters : # Filters resulted in empty
-             st.warning("Filters resulted in an empty dataset.")
-             df_display = df_filtered_display # Update df_display to be empty
-        # else: df_display remains the full original data_df copy if filters don't change anything or no filters active
-
-    if st.button("Clear All Filters"):
-        st.session_state.active_filters = {}
-        # No need to manually rerun, Streamlit reruns on button click.
-        # If state needs to be reset before other widgets are drawn, experimental_rerun can be useful.
-        # For this case, the natural rerun should be sufficient.
-        st.experimental_rerun()
-
-
-    # 3. Basic Visualizations (operates on df_display, which is potentially filtered)
-    st.subheader("Visualize Data")
-    if df_display.empty:
-        st.info("No data to visualize (either not loaded, or filtered to empty).")
-    else:
-        vis_cols_list = ["None"] + df_display.columns.tolist()
-        col_to_visualize = st.selectbox("Select column to visualize", vis_cols_list,
-                                        index=0,
-                                        key="visualization_column_selector")
-
-        if col_to_visualize != "None":
-            st.write(f"Visualization for {col_to_visualize}:")
-            vis_series = df_display[col_to_visualize].dropna()
-
-            if vis_series.empty:
-                st.warning(f"Column '{col_to_visualize}' has no data after dropping NA values (or all values were filtered out).")
-            elif pd.api.types.is_numeric_dtype(vis_series):
-                st.write("Histogram:")
-                try:
-                    # np.histogram might fail for some datatypes like timedelta if not handled
-                    if pd.api.types.is_timedelta64_dtype(vis_series):
-                        vis_series_numeric = vis_series.dt.total_seconds()
-                        st.info("Timedelta data converted to total seconds for histogram.")
-                    else:
-                        vis_series_numeric = vis_series
-
-                    hist_counts, hist_bins = np.histogram(vis_series_numeric, bins='auto')
-                    hist_df = pd.DataFrame({'count': hist_counts, 'bin_start': hist_bins[:-1]})
-                    st.bar_chart(hist_df.set_index('bin_start'))
-                except Exception as e:
-                    st.error(f"Could not generate histogram for {col_to_visualize}: {e}")
-            # Check for boolean or low-cardinality categorical
-            elif vis_series.dtype == 'bool' or vis_series.nunique() < 30 :
-                st.write("Value Counts (Bar Chart):")
-                val_counts = vis_series.value_counts().reset_index()
-                # Ensure column names are strings for st.bar_chart
-                val_counts.columns = [str(col_to_visualize), 'count']
-                st.bar_chart(val_counts.set_index(str(col_to_visualize)))
-            else: # High cardinality strings/objects
-                st.warning(f"Column '{col_to_visualize}' has high cardinality ({vis_series.nunique()} unique values). A simple bar chart might not be informative. Top N values could be shown as an improvement.")
+                    ax.set_title(f"{series_name} with IQR Anomalies")
+                    ax.legend()
+                    plt.xticks(rotation=45)
+                    plt.tight_layout()
+                    st.pyplot(fig)
+                    if st.checkbox("Show IQR Bounds Info", key="iqr_bounds_table_cb"):
+                        st.dataframe(bounds_info)
 else:
-    st.info("Load data using the sidebar to enable analysis features.")
+    if not st.session_state.data_df_original.empty: # Data is loaded but no series prepared
+        st.info("Prepare a time series using the 'Time Series Settings' in the sidebar to enable specific time series analyses.")
+    # If data_df_original is empty, the message "Load data..." from "General Data Analysis Tools" section is sufficient.
+
+# --- General Data Analysis Tools (Existing Filters, etc.) ---
+# Kept minimal as focus shifts to TS, but could be expanded or kept as is.
+st.header("General Data Table Tools")
+
+if not st.session_state.data_df.empty:
+    # Simplified: only showing stats for the general table, filtering was complex and less focus now.
+    if st.checkbox("Show Summary Statistics for Full Loaded Data Preview", key="general_stats_cb"):
+        st.subheader("Summary Statistics (Loaded Data Preview)")
+        st.write(st.session_state.data_df.describe(include='all'))
+else:
+    st.info("Load data using the sidebar to enable general data tools.")
 
 # To run this app: streamlit run src/main.py
