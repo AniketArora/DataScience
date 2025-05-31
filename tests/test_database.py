@@ -56,19 +56,6 @@ def test_fetch_postgres_data_failure(mock_st, mock_read_sql):
 # --- Elasticsearch Tests ---
 @patch('src.database.Elasticsearch')
 @patch('src.database.st') # Mock Streamlit
-def test_connect_elasticsearch_cloud_id_success(mock_st, mock_es_constructor):
-    mock_es_instance = MagicMock()
-    mock_es_instance.ping.return_value = True
-    mock_es_constructor.return_value = mock_es_instance
-
-    es_conn = connect_elasticsearch(cloud_id="test_cloud_id", api_key=("key_id", "api_key_val"))
-
-    mock_es_constructor.assert_called_once_with(cloud_id="test_cloud_id", api_key=("key_id", "api_key_val"))
-    assert es_conn == mock_es_instance
-    mock_st.success.assert_called_once_with("Successfully connected to Elasticsearch!")
-
-@patch('src.database.Elasticsearch')
-@patch('src.database.st') # Mock Streamlit
 def test_connect_elasticsearch_hosts_success(mock_st, mock_es_constructor):
     mock_es_instance = MagicMock()
     mock_es_instance.ping.return_value = True
@@ -76,7 +63,7 @@ def test_connect_elasticsearch_hosts_success(mock_st, mock_es_constructor):
 
     es_conn = connect_elasticsearch(hosts=["http://localhost:9200"])
 
-    mock_es_constructor.assert_called_once_with(["http://localhost:9200"])
+    mock_es_constructor.assert_called_once_with(["http://localhost:9200"]) # Corrected: called as positional
     assert es_conn == mock_es_instance
     mock_st.success.assert_called_once_with("Successfully connected to Elasticsearch!")
 
@@ -116,55 +103,52 @@ def test_connect_elasticsearch_connection_error(mock_st, mock_es_constructor):
     expected_error_msg = "Error connecting to Elasticsearch: Mocked ES Connection Error From Custom Class"
     mock_st.error.assert_called_once_with(expected_error_msg)
 
-@patch('src.database.st') # Mock Streamlit
-def test_connect_elasticsearch_no_params(mock_st):
-    es_conn = connect_elasticsearch()
-    assert es_conn is None
-    mock_st.error.assert_called_once_with("Elasticsearch connection requires either cloud_id & api_key or hosts.")
 
+# test_connect_elasticsearch_no_params removed as connect_elasticsearch now requires 'hosts'.
 
-@patch('src.database.st') # Mock Streamlit
-def test_fetch_elasticsearch_data_success(mock_st):
+@patch('src.database.scan') # Mock scan from src.database
+@patch('src.database.st')
+def test_fetch_elasticsearch_data_scan_success(mock_st, mock_scan_helper): # Renamed test
     mock_es_conn = MagicMock()
-    mock_response = {
-        'hits': {
-            'hits': [
-                {'_source': {'col1': 1, 'col2': 'a'}},
-                {'_source': {'col1': 2, 'col2': 'b'}}
-            ]
-        }
-    }
-    mock_es_conn.search.return_value = mock_response
-    expected_df = pd.DataFrame([
-        {'col1': 1, 'col2': 'a'},
-        {'col1': 2, 'col2': 'b'}
-    ])
+    # scan yields dicts with _source key directly
+    mock_hits_scan_output = [
+        {'_source': {'col1': 1, 'col2': 'a'}},
+        {'_source': {'col1': 2, 'col2': 'b'}}
+    ]
+    mock_scan_helper.return_value = iter(mock_hits_scan_output)
 
-    df = fetch_elasticsearch_data(mock_es_conn, "test_index")
+    expected_df_data = [item['_source'] for item in mock_hits_scan_output]
+    expected_df = pd.DataFrame(expected_df_data)
 
-    mock_es_conn.search.assert_called_once_with(index="test_index", body={"query": {"match_all": {}}}, size=1000)
+    df = fetch_elasticsearch_data(mock_es_conn, "test_index") # Function under test
+
+    mock_scan_helper.assert_called_once_with(client=mock_es_conn, index="test_index", query={"query": {"match_all": {}}})
     pd.testing.assert_frame_equal(df, expected_df)
+    mock_st.warning.assert_not_called()
 
-@patch('src.database.st') # Mock Streamlit
-def test_fetch_elasticsearch_data_no_hits(mock_st):
+@patch('src.database.scan')
+@patch('src.database.st')
+def test_fetch_elasticsearch_data_scan_no_hits(mock_st, mock_scan_helper): # Renamed
     mock_es_conn = MagicMock()
-    mock_response = {'hits': {'hits': []}}
-    mock_es_conn.search.return_value = mock_response
+    mock_scan_helper.return_value = iter([])
 
     df = fetch_elasticsearch_data(mock_es_conn, "test_index")
 
     assert df.empty
-    mock_st.warning.assert_called_once_with("No documents found in index 'test_index' for the given query.")
+    mock_scan_helper.assert_called_once_with(client=mock_es_conn, index="test_index", query={"query": {"match_all": {}}})
+    mock_st.warning.assert_called_once_with("No documents found in index 'test_index' for the given query using scan.")
 
-@patch('src.database.st') # Mock Streamlit
-def test_fetch_elasticsearch_data_search_error(mock_st):
+@patch('src.database.scan')
+@patch('src.database.st')
+def test_fetch_elasticsearch_data_scan_error(mock_st, mock_scan_helper): # Renamed
     mock_es_conn = MagicMock()
-    mock_es_conn.search.side_effect = Exception("Search failed")
+    mock_scan_helper.side_effect = Exception("Scan process failed")
 
     df = fetch_elasticsearch_data(mock_es_conn, "test_index")
 
     assert df.empty
-    mock_st.error.assert_called_once_with("Error fetching data from Elasticsearch index 'test_index': Search failed")
+    mock_scan_helper.assert_called_once_with(client=mock_es_conn, index="test_index", query={"query": {"match_all": {}}})
+    mock_st.error.assert_called_once_with("Error fetching data from Elasticsearch index 'test_index' using scan: Scan process failed")
 
 def test_fetch_elasticsearch_data_no_connection():
     df = fetch_elasticsearch_data(None, "test_index")

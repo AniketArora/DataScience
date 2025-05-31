@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import psycopg2
 from elasticsearch import Elasticsearch
+from elasticsearch.helpers import scan # Added scan import
 
 # --- PostgreSQL Connection ---
 def connect_postgres(host, port, dbname, user, password):
@@ -29,20 +30,16 @@ def fetch_postgres_data(conn, query):
         return pd.DataFrame() # Return empty DataFrame on error
 
 # --- Elasticsearch Connection ---
-def connect_elasticsearch(cloud_id=None, api_key=None, hosts=None):
+def connect_elasticsearch(hosts):
     """
-    Connects to an Elasticsearch cluster.
-    Supports connection via cloud_id and api_key (recommended for Elastic Cloud)
-    or via a list of host URLs for self-managed clusters.
+    Connects to an Elasticsearch cluster via a list of host URLs.
     """
     try:
-        if cloud_id and api_key:
-            es = Elasticsearch(cloud_id=cloud_id, api_key=api_key)
-        elif hosts:
-            es = Elasticsearch(hosts)
-        else:
-            st.error("Elasticsearch connection requires either cloud_id & api_key or hosts.")
+        if not hosts:
+            st.error("Elasticsearch connection requires host URL(s).")
             return None
+
+        es = Elasticsearch(hosts)
 
         if es.ping():
             st.success("Successfully connected to Elasticsearch!")
@@ -56,8 +53,8 @@ def connect_elasticsearch(cloud_id=None, api_key=None, hosts=None):
 
 def fetch_elasticsearch_data(es_conn, index_name, query_body=None):
     """
-    Fetches data from Elasticsearch using the provided connection, index, and query.
-    If query_body is None, it fetches all documents (up to 10000 by default).
+    Fetches data from Elasticsearch using the helpers.scan utility for efficiency.
+    If query_body is None, it fetches all documents.
     """
     if not es_conn:
         return pd.DataFrame()
@@ -65,24 +62,21 @@ def fetch_elasticsearch_data(es_conn, index_name, query_body=None):
     if query_body is None:
         query_body = {"query": {"match_all": {}}}
 
+    documents = []
     try:
-        # The 'scroll' API is better for large datasets, but 'search' is simpler for now.
-        # Setting a large size to get more documents, default is 10.
-        res = es_conn.search(index=index_name, body=query_body, size=1000)
-        hits = res['hits']['hits']
+        # scan is a generator, iterate through it to get all documents
+        for hit in scan(client=es_conn, index=index_name, query=query_body):
+            documents.append(hit['_source'])
 
-        if not hits:
-            st.warning(f"No documents found in index '{index_name}' for the given query.")
+        if not documents:
+            st.warning(f"No documents found in index '{index_name}' for the given query using scan.")
             return pd.DataFrame()
 
-        # Process hits into a DataFrame
-        # For simplicity, we'll just take the _source from each hit.
-        # More complex processing might be needed depending on the data structure.
-        data = [hit['_source'] for hit in hits]
-        df = pd.DataFrame(data)
+        df = pd.DataFrame(documents)
         return df
     except Exception as e:
-        st.error(f"Error fetching data from Elasticsearch index '{index_name}': {e}")
+        # More specific exception handling for scan errors might be useful if identifiable
+        st.error(f"Error fetching data from Elasticsearch index '{index_name}' using scan: {e}")
         return pd.DataFrame()
 
 if __name__ == '__main__':

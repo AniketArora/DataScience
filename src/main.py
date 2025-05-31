@@ -50,38 +50,26 @@ if db_type == "PostgreSQL":
 
 elif db_type == "Elasticsearch":
     st.sidebar.subheader("Elasticsearch Details")
-    es_conn_type = st.sidebar.radio("Connection Method", ["Cloud ID & API Key", "Host URL(s)"])
 
-    es_cloud_id = None
-    es_api_key_id = None
-    es_api_key_val = None
-    es_hosts = None
-
-    if es_conn_type == "Cloud ID & API Key":
-        es_cloud_id = st.sidebar.text_input("Cloud ID")
-        es_api_key_id = st.sidebar.text_input("API Key ID")
-        es_api_key_val = st.sidebar.text_input("API Key Value", type="password")
-    else: # Host URL(s)
-        es_hosts_str = st.sidebar.text_input("Host URL(s) (comma-separated)", "http://localhost:9200")
-        es_hosts = [h.strip() for h in es_hosts_str.split(',')]
+    # Directly ask for Host URL(s)
+    es_hosts_str = st.sidebar.text_input("Host URL(s) (comma-separated)", "http://localhost:9200")
 
     es_index = st.sidebar.text_input("Index Name", "my_index")
     es_query_dsl_str = st.sidebar.text_area("Elasticsearch Query DSL (JSON)", '{\n  "query": {\n    "match_all": {}\n  }\n}')
 
     if st.sidebar.button("Connect to Elasticsearch"):
-        api_key_tuple = None
-        if es_conn_type == "Cloud ID & API Key" and es_api_key_id and es_api_key_val:
-            api_key_tuple = (es_api_key_id, es_api_key_val)
+        es_hosts_list = [h.strip() for h in es_hosts_str.split(',') if h.strip()] # Ensure no empty strings from multiple commas
 
-        st.session_state.db_conn = connect_elasticsearch(
-            cloud_id=es_cloud_id if es_conn_type == "Cloud ID & API Key" else None,
-            api_key=api_key_tuple if es_conn_type == "Cloud ID & API Key" else None,
-            hosts=es_hosts if es_conn_type == "Host URL(s)" else None
-        )
-        if st.session_state.db_conn: # connect_elasticsearch shows messages
-            st.session_state.active_filters = {} # Reset filters
-            st.session_state.data_df = pd.DataFrame() # Clear old data
-
+        if not es_hosts_list: # Check if the list is empty after stripping and filtering
+            st.sidebar.error("Please enter valid Elasticsearch Host URL(s).")
+            st.session_state.db_conn = None # Ensure connection is reset
+        else:
+            st.session_state.db_conn = connect_elasticsearch(hosts=es_hosts_list)
+            # connect_elasticsearch in database.py shows success/error messages via st.success/st.error
+            if st.session_state.db_conn: # If connection was successful
+                 st.session_state.active_filters = {}
+                 st.session_state.data_df = pd.DataFrame()
+            # No explicit else here because connect_elasticsearch handles st.error for failures
 
     if st.sidebar.button("Fetch Data from Elasticsearch"):
         if st.session_state.db_conn:
