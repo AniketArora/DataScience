@@ -37,13 +37,26 @@ def test_perform_stationarity_test_non_stationary(sample_series_profiling):
     assert 'p-value' in results
     assert 'Interpretation' in results
     assert isinstance(results.get("Is Stationary (at chosen alpha)"), bool)
+    # The stationarity of sample_series_profiling (repeating pattern) is ambiguous for ADF;
+    # other tests cover clear stationary/non-stationary cases.
 
-def test_perform_stationarity_test_stationary():
+
+def test_perform_stationarity_test_on_random_noise(): # Renamed and uses pure noise
     data = np.random.randn(100)
     stationary_s = pd.Series(data)
     results = perform_stationarity_test(stationary_s)
-    # P-value for random normal data should be low enough for stationarity
-    assert results.get("Is Stationary (at chosen alpha)"), f"Expected stationary, p-value: {results.get('p-value')}"
+    assert 'ADF Statistic' in results
+    assert 'p-value' in results
+    # For pure random noise, p-value should be very low, indicating stationarity
+    assert results.get("Is Stationary (at chosen alpha)"), f"Expected stationary for random noise, p-value: {results.get('p-value')}"
+
+def test_perform_stationarity_test_on_trend_series(): # New test for clear non-stationarity
+    data = np.arange(100).astype(float) # ensure float for consistency
+    trend_s = pd.Series(data)
+    results = perform_stationarity_test(trend_s)
+    assert 'ADF Statistic' in results
+    assert 'p-value' in results
+    assert not results.get("Is Stationary (at chosen alpha)"), f"Expected non-stationary for trend series, p-value: {results.get('p-value')}"
 
 def test_perform_stationarity_test_empty_series():
     results = perform_stationarity_test(pd.Series([], dtype=float))

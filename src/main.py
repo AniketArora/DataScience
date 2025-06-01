@@ -245,6 +245,16 @@ if not st.session_state.get('all_device_features_df', pd.DataFrame()).empty and 
                 if not st.session_state.res_df_anomalies_sorted.empty:
                     top_anomaly_id = st.session_state.res_df_anomalies_sorted.index[0]; top_anomaly_score = st.session_state.res_df_anomalies_sorted.iloc[0]["score"]; st.markdown("---"); st.markdown(f"**Summary for Top Anomaly ({top_anomaly_id}):**"); summary_text = generate_anomaly_summary_text(top_anomaly_id, top_anomaly_score, comparison_df); st.markdown(summary_text)
                 else: st.info("No data for feature comparison.")
+
+                st.markdown("---")
+                st.subheader("Detailed Anomaly Explanation (Future Enhancement)")
+                st.info(
+                    "Future versions aim to include more detailed explanations for why specific devices "
+                    "are flagged as anomalous, potentially using surrogate models (e.g., decision trees) "
+                    "to approximate the behavior of the anomaly detection model."
+                )
+                st.button("Generate Detailed Explanation for Top Anomaly (Coming Soon)", disabled=True, key="surrogate_model_button")
+
         with tab_pop_clustering:
             st.subheader("Device Behavior Clustering")
             if "last_clustering_df_id" not in st.session_state or id(features_df_cleaned) != st.session_state.get("last_clustering_df_id"): st.session_state.clustering_results = {}; st.session_state.kmeans_stats_df = None; st.session_state.last_clustering_df_id = id(features_df_cleaned)
