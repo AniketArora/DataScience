@@ -29,7 +29,9 @@ from src.analysis_modules.explainability import (
     compare_anomalous_vs_normal_features,
     generate_cluster_summary_text,
     generate_anomaly_summary_text,
-    explain_anomalies_with_surrogate_model
+    explain_anomalies_with_surrogate_model,
+    analyze_event_correlations, # Added for context, ensure it's there
+    analyze_significant_event_types # New import
 )
 from sklearn.tree import plot_tree
 import matplotlib.pyplot as plt
@@ -560,6 +562,41 @@ elif app_mode == "General Analysis":
                             st.info("No event correlation data to display for anomalies or no event count features found matching the prefix.")
                     # else: st.info("No event count features found in the dataset for anomaly correlation.") # Optional message
 
+                    # Significant Event Type Analysis for Anomalies
+                    event_feature_prefix_anom = f"{st.session_state.time_series_specs.get('selected_value_col_for_analysis', 'value')}_evt_count_"
+                    # Check if there are any event columns to analyze
+                    event_cols_for_sig_anom_check = [col for col in features_df_cleaned.columns if col.startswith(event_feature_prefix_anom)]
+
+                    if event_cols_for_sig_anom_check:
+                        st.markdown("---")
+                        st.subheader("Significant Event Type Analysis (Anomalies vs. Normals)")
+                        try:
+                            sig_event_types_anom_df, error_sig_anom = analyze_significant_event_types(
+                                all_device_features_df_with_event_features=features_df_cleaned,
+                                result_labels=pop_results["labels"],
+                                event_feature_prefix=event_feature_prefix_anom,
+                                at_risk_label=-1, # Anomalous
+                                baseline_label=1  # Normal
+                            )
+                            if error_sig_anom:
+                                st.warning(f"Could not perform significant event type analysis for anomalies: {error_sig_anom}")
+                            elif sig_event_types_anom_df is not None and not sig_event_types_anom_df.empty:
+                                st.markdown("""
+                                This table shows event types that are notably more or less frequent in anomalous devices compared to normal ones.
+                                - **Lift > 1**: Event type is more common in anomalous devices.
+                                - **Lift < 1**: Event type is less common in anomalous devices (i.e., more common in normal ones).
+                                - **P-value < 0.05**: Suggests the observed difference is statistically significant.
+                                - **Chi2 Contingency Note**: If present, consider results with caution, as Fisher's exact test might be more appropriate due to low counts/expected frequencies.
+                                """)
+                                st.dataframe(sig_event_types_anom_df)
+                            else:
+                                st.info("No significant event types found or data was insufficient for anomalies.")
+                        except Exception as e_sig_anom:
+                            st.error(f"An unexpected error occurred during significant event type analysis for anomalies: {e_sig_anom}")
+                    # else:
+                        # st.info("No event count features (e.g., columns starting with 'value_evt_count_') found in the dataset for significant event type analysis with anomalies.")
+
+
             with tab_pop_clustering:
                 st.subheader("Device Behavior Clustering")
                 if "last_clustering_df_id" not in st.session_state or id(features_df_cleaned) != st.session_state.get("last_clustering_df_id"): st.session_state.clustering_results = {}; st.session_state.kmeans_stats_df = None; st.session_state.last_clustering_df_id = id(features_df_cleaned)
@@ -635,6 +672,71 @@ elif app_mode == "General Analysis":
                         else:
                             st.info("No event correlation data to display for clusters or no event count features found matching the prefix.")
                     # else: st.info("No event count features found in the dataset for cluster correlation.") # Optional
+
+                    # Significant Event Type Analysis for Clusters
+                    event_feature_prefix_clust = f"{st.session_state.time_series_specs.get('selected_value_col_for_analysis', 'value')}_evt_count_"
+                    event_cols_for_sig_clust_check = [col for col in features_df_cleaned.columns if col.startswith(event_feature_prefix_clust)]
+
+                    if event_cols_for_sig_clust_check and clust_results and 'labels' in clust_results:
+                        st.markdown("---")
+                        st.subheader("Significant Event Type Analysis (Between Clusters)")
+
+                        available_clusters_sig = sorted([c for c in clust_results['labels'].unique() if not (c == -1 and clust_results.get('method') == "DBSCAN")]) # Exclude noise for "at-risk"
+                        if len(available_clusters_sig) >= 1: # Need at least one defined cluster
+
+                            col_sig_event1, col_sig_event2 = st.columns(2)
+                            with col_sig_event1:
+                                selected_at_risk_cluster_sig = st.selectbox(
+                                    "Select 'At-Risk' Cluster for Event Analysis:",
+                                    options=available_clusters_sig,
+                                    key="at_risk_cluster_sig_event_general"
+                                )
+                            # Baseline options: None (all others), or a specific cluster
+                            baseline_options_sig = ["All Other Clusters (Combined)"] + [c for c in available_clusters_sig if c != selected_at_risk_cluster_sig]
+                            with col_sig_event2:
+                                selected_baseline_option_sig = st.selectbox(
+                                    "Select Baseline Group:",
+                                    options=baseline_options_sig,
+                                    key="baseline_option_sig_event_general"
+                                )
+
+                            baseline_label_for_func_sig = None
+                            if selected_baseline_option_sig != "All Other Clusters (Combined)":
+                                baseline_label_for_func_sig = selected_baseline_option_sig
+
+                            # Prevent running if at-risk and specific baseline are the same (should not happen with current UI logic but good check)
+                            if selected_at_risk_cluster_sig == baseline_label_for_func_sig:
+                                st.warning("At-risk cluster and baseline cluster cannot be the same for this analysis.")
+                            else:
+                                try:
+                                    sig_event_types_clust_df, error_sig_clust = analyze_significant_event_types(
+                                        all_device_features_df_with_event_features=features_df_cleaned,
+                                        result_labels=clust_results["labels"],
+                                        event_feature_prefix=event_feature_prefix_clust,
+                                        at_risk_label=selected_at_risk_cluster_sig,
+                                        baseline_label=baseline_label_for_func_sig
+                                    )
+                                    if error_sig_clust:
+                                        st.warning(f"Could not perform significant event type analysis for Cluster {selected_at_risk_cluster_sig}: {error_sig_clust}")
+                                    elif sig_event_types_clust_df is not None and not sig_event_types_clust_df.empty:
+                                        baseline_desc = f"Cluster {baseline_label_for_func_sig}" if baseline_label_for_func_sig is not None else "all other non-noise clusters"
+                                        st.markdown(f"""
+                                        This table shows event types that are notably more or less frequent in Cluster **{selected_at_risk_cluster_sig}** compared to **{baseline_desc}**.
+                                        - **Lift > 1**: Event type is more common in Cluster {selected_at_risk_cluster_sig}.
+                                        - **Lift < 1**: Event type is less common in Cluster {selected_at_risk_cluster_sig} (i.e., more common in {baseline_desc}).
+                                        - **P-value < 0.05**: Suggests the observed difference is statistically significant.
+                                        - **Chi2 Contingency Note**: If present, consider results with caution.
+                                        """)
+                                        st.dataframe(sig_event_types_clust_df)
+                                    else:
+                                        st.info(f"No significant event types found or data was insufficient for Cluster {selected_at_risk_cluster_sig} vs. baseline.")
+                                except Exception as e_sig_clust:
+                                    st.error(f"An unexpected error occurred during significant event type analysis for clusters: {e_sig_clust}")
+                        else:
+                            st.info("Not enough clusters (excluding noise) available for significant event type comparison.")
+                    # else:
+                        # st.info("No event count features found for significant event type analysis with clusters, or clustering not yet performed.")
+
 
                     if not features_df_cleaned.empty: # This is for the feature distribution plot by cluster
                         feat_to_plot = st.selectbox("Select feature to visualize by cluster", options=features_df_cleaned.columns.tolist(), key="clust_feat_plot_sel_general")
