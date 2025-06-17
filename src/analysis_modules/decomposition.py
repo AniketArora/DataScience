@@ -2,7 +2,11 @@ import pandas as pd
 import streamlit as st
 from statsmodels.tsa.seasonal import seasonal_decompose
 import matplotlib.pyplot as plt # For plotting if not using st.pyplot directly with returned figure
+import logging
 
+logger = logging.getLogger(__name__)
+
+@st.cache_data
 def decompose_time_series(series: pd.Series, model='additive', period=None):
     """
     Performs time series decomposition into trend, seasonal, and residual components.
@@ -22,13 +26,19 @@ def decompose_time_series(series: pd.Series, model='additive', period=None):
         str or None: An error message if decomposition fails.
     """
     if not isinstance(series, pd.Series):
-        return None, "Input is not a pandas Series."
+        msg = "Input is not a pandas Series."
+        logger.warning(msg)
+        return None, msg
 
     if not isinstance(series.index, pd.DatetimeIndex):
-        return None, "Series index must be a DatetimeIndex."
+        msg = "Series index must be a DatetimeIndex."
+        logger.warning(msg)
+        return None, msg
 
     if series.empty:
-        return None, "Input series is empty."
+        msg = "Input series is empty."
+        logger.warning(msg)
+        return None, msg
 
     # Ensure there are enough observations for the period
     # seasonal_decompose requires at least 2 full periods if period is specified,
@@ -37,19 +47,21 @@ def decompose_time_series(series: pd.Series, model='additive', period=None):
     if period:
         min_obs = 2 * period
 
-    if len(series.dropna()) < min_obs: # seasonal_decompose handles NaNs, but length check is good
-         return None, f"Not enough data points (need at least {min_obs} non-NaN) for the given period to decompose effectively."
+    if len(series.dropna()) < min_obs:
+         msg = f"Not enough data points (need at least {min_obs} non-NaN) for the given period to decompose effectively."
+         logger.warning(msg)
+         return None, msg
 
     try:
-        # If period is not provided, seasonal_decompose will try to infer it.
-        # For daily data, a common explicit period is 7 (weekly) or 30/365 (monthly/yearly)
-        # If series.index.freq is None, period must be set.
         if series.index.freq is None and period is None:
-            return None, "Series frequency is not set. Please specify a 'period' for decomposition."
+            msg = "Series frequency is not set. Please specify a 'period' for decomposition."
+            logger.warning(msg)
+            return None, msg
 
-        result = seasonal_decompose(series.dropna(), model=model, period=period) # dropna helps
+        result = seasonal_decompose(series.dropna(), model=model, period=period)
         return result, None
     except Exception as e:
+        logger.error("Time series decomposition failed for series %s: %s", series.name if series.name else "Unnamed", e, exc_info=True)
         return None, f"Time series decomposition failed: {e}"
 
 if __name__ == '__main__':

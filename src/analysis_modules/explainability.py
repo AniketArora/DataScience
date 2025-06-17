@@ -2,79 +2,136 @@ import pandas as pd
 import numpy as np
 from scipy.stats import f_oneway
 import streamlit as st
-from sklearn.tree import DecisionTreeClassifier, plot_tree
+from sklearn.tree import DecisionTreeClassifier, plot_tree # plot_tree is not used in this module directly
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
+import logging
+
+logger = logging.getLogger(__name__)
 
 
+@st.cache_data
 def get_cluster_feature_summary(feature_df: pd.DataFrame, cluster_labels: pd.Series):
     if not isinstance(feature_df, pd.DataFrame) or not isinstance(cluster_labels, pd.Series):
-        return None, "Inputs must be pandas DataFrame and Series."
+        msg = "Inputs must be pandas DataFrame and Series."
+        logger.warning(msg)
+        return None, msg
     if feature_df.empty or cluster_labels.empty:
-        return None, "Input DataFrame or labels Series is empty."
+        msg = "Input DataFrame or labels Series is empty."
+        logger.warning(msg)
+        return None, msg
     if not feature_df.index.equals(cluster_labels.index):
-        return None, "Feature DataFrame and cluster labels must have the same index."
+        msg = "Feature DataFrame and cluster labels must have the same index."
+        logger.warning(msg)
+        return None, msg
     try:
         if cluster_labels.isnull().any():
             valid_indices = cluster_labels.dropna().index
             feature_df_cleaned = feature_df.loc[valid_indices]
             cluster_labels_cleaned = cluster_labels.loc[valid_indices]
-            if feature_df_cleaned.empty: return None, "No valid data after removing NaN cluster labels."
+            if feature_df_cleaned.empty:
+                msg = "No valid data after removing NaN cluster labels."
+                logger.warning(msg)
+                return None, msg
         else:
             feature_df_cleaned = feature_df; cluster_labels_cleaned = cluster_labels
         numeric_feature_df = feature_df_cleaned.select_dtypes(include=np.number)
-        if numeric_feature_df.empty: return None, "No numeric features found."
+        if numeric_feature_df.empty:
+            msg = "No numeric features found."
+            logger.warning(msg)
+            return None, msg
         summary_df = numeric_feature_df.groupby(cluster_labels_cleaned).mean()
         return summary_df, None
-    except Exception as e: return None, f"Error calculating cluster feature summary: {e}"
+    except Exception as e:
+        logger.error("Error calculating cluster feature summary: %s", e, exc_info=True)
+        return None, f"Error calculating cluster feature summary: {e}"
 
+@st.cache_data
 def get_feature_importance_for_clusters_anova(feature_df: pd.DataFrame, cluster_labels: pd.Series):
     if not isinstance(feature_df, pd.DataFrame) or not isinstance(cluster_labels, pd.Series):
-        return None, "Inputs must be pandas DataFrame and Series."
-    if feature_df.empty or cluster_labels.empty: return None, "Input DataFrame or labels Series is empty."
-    if not feature_df.index.equals(cluster_labels.index): return None, "Indices must match."
+        msg = "Inputs must be pandas DataFrame and Series."
+        logger.warning(msg)
+        return None, msg
+    if feature_df.empty or cluster_labels.empty:
+        msg = "Input DataFrame or labels Series is empty."
+        logger.warning(msg)
+        return None, msg
+    if not feature_df.index.equals(cluster_labels.index):
+        msg = "Indices must match."
+        logger.warning(msg)
+        return None, msg
     valid_indices = cluster_labels.dropna().index
     feature_df_cleaned = feature_df.loc[valid_indices]; cluster_labels_cleaned = cluster_labels.loc[valid_indices]
-    if cluster_labels_cleaned.nunique() < 2: return None, "Need at least two clusters."
-    if feature_df_cleaned.empty: return None, "Feature DataFrame empty after NaN label handling."
+    if cluster_labels_cleaned.nunique() < 2:
+        msg = "Need at least two clusters for ANOVA."
+        logger.warning(msg)
+        return None, msg
+    if feature_df_cleaned.empty:
+        msg = "Feature DataFrame empty after NaN label handling."
+        logger.warning(msg)
+        return None, msg
     numeric_feature_df = feature_df_cleaned.select_dtypes(include=np.number)
-    if numeric_feature_df.empty: return None, "No numeric features for ANOVA."
+    if numeric_feature_df.empty:
+        msg = "No numeric features for ANOVA."
+        logger.warning(msg)
+        return None, msg
     f_values, p_values, features = [], [], []
     for feature_name in numeric_feature_df.columns:
         try:
             groups = [numeric_feature_df[feature_name][cluster_labels_cleaned == c] for c in cluster_labels_cleaned.unique()]
-            groups = [g for g in groups if len(g.dropna()) > 1 and g.dropna().var() > 1e-6]
+            groups = [g for g in groups if len(g.dropna()) > 1 and g.dropna().var() > 1e-6] # Ensure variance > 0 and enough samples
             if len(groups) < 2: f_stat, p_val = np.nan, np.nan
             else: f_stat, p_val = f_oneway(*groups)
             f_values.append(f_stat); p_values.append(p_val); features.append(feature_name)
-        except Exception: f_values.append(np.nan); p_values.append(np.nan); features.append(feature_name)
-    if not features: return None, "No features processed."
+        except Exception as e_anova: # More specific error logging
+            logger.warning("ANOVA calculation failed for feature '%s': %s", feature_name, e_anova)
+            f_values.append(np.nan); p_values.append(np.nan); features.append(feature_name)
+    if not features:
+        msg = "No features processed by ANOVA."
+        logger.warning(msg)
+        return None, msg
     importance_df = pd.DataFrame({'Feature': features, 'F-Value': f_values, 'P-Value': p_values})
     return importance_df.sort_values(by='F-Value', ascending=False).reset_index(drop=True), None
 
+@st.cache_data
 def compare_anomalous_vs_normal_features(feature_df: pd.DataFrame, anomaly_labels: pd.Series, anomalous_label_val=-1):
     if not isinstance(feature_df, pd.DataFrame) or not isinstance(anomaly_labels, pd.Series):
-        return None, "Inputs must be pandas DataFrame and Series."
-    if feature_df.empty or anomaly_labels.empty: return None, "Input DataFrame or labels Series is empty."
-    if not feature_df.index.equals(anomaly_labels.index): return None, "Indices must match."
+        msg = "Inputs must be pandas DataFrame and Series."
+        logger.warning(msg)
+        return None, msg
+    if feature_df.empty or anomaly_labels.empty:
+        msg = "Input DataFrame or labels Series is empty."
+        logger.warning(msg)
+        return None, msg
+    if not feature_df.index.equals(anomaly_labels.index):
+        msg = "Indices must match."
+        logger.warning(msg)
+        return None, msg
     try:
         numeric_feature_df = feature_df.select_dtypes(include=np.number)
-        if numeric_feature_df.empty: return None, "No numeric features."
+        if numeric_feature_df.empty:
+            msg = "No numeric features."
+            logger.warning(msg)
+            return None, msg
         normal_mask = (anomaly_labels != anomalous_label_val); anomalous_mask = (anomaly_labels == anomalous_label_val)
-        if not normal_mask.any() and not anomalous_mask.any(): return None, "No normal or anomalous devices."
+        if not normal_mask.any() and not anomalous_mask.any():
+            msg = "No normal or anomalous devices."
+            logger.warning(msg)
+            return None, msg
         if not normal_mask.any():
-            # This st.warning will not work here as this module should not directly call Streamlit UI elements.
-            # The warning/message should be handled by the caller in main.py.
-            # For now, returning a specific message or modified DataFrame.
+            msg = "No 'normal' devices found for comparison."
+            logger.warning(msg)
             anomalous_features_mean = numeric_feature_df[anomalous_mask].mean().rename("Anomalous_Mean")
             comparison_df = pd.DataFrame(anomalous_features_mean); comparison_df['Normal_Mean'] = np.nan
             comparison_df['Difference (Anomalous - Normal)'] = np.nan; comparison_df['Relative_Difference (%)'] = np.nan
-            return comparison_df, "No 'normal' devices found for comparison."
+            return comparison_df, msg
         if not anomalous_mask.any():
+            msg = "No 'anomalous' devices found for comparison."
+            logger.warning(msg)
             normal_features_mean = numeric_feature_df[normal_mask].mean().rename("Normal_Mean")
             comparison_df = pd.DataFrame(normal_features_mean); comparison_df['Anomalous_Mean'] = np.nan
             comparison_df['Difference (Anomalous - Normal)'] = np.nan; comparison_df['Relative_Difference (%)'] = np.nan
-            return comparison_df, "No 'anomalous' devices found for comparison."
+            return comparison_df, msg
         normal_features_mean = numeric_feature_df[normal_mask].mean().rename("Normal_Mean")
         anomalous_features_mean = numeric_feature_df[anomalous_mask].mean().rename("Anomalous_Mean")
         comparison_df = pd.concat([normal_features_mean, anomalous_features_mean], axis=1)
@@ -82,45 +139,55 @@ def compare_anomalous_vs_normal_features(feature_df: pd.DataFrame, anomaly_label
         comparison_df['Relative_Difference (%)'] = (comparison_df['Difference (Anomalous - Normal)'] / comparison_df['Normal_Mean'].abs().replace(0, np.nan)) * 100
         comparison_df['Relative_Difference (%)'] = comparison_df['Relative_Difference (%)'].replace([np.inf, -np.inf], np.nan)
         return comparison_df.sort_values(by='Difference (Anomalous - Normal)', key=abs, ascending=False), None
-    except Exception as e: return None, f"Error comparing features: {e}"
+    except Exception as e:
+        logger.error("Error comparing anomalous vs normal features: %s", e, exc_info=True)
+        return None, f"Error comparing features: {e}"
 
+@st.cache_data
 def explain_anomalies_with_surrogate_model(
     feature_df: pd.DataFrame, anomaly_labels: pd.Series, anomalous_label_val=-1, normal_label_val=1,
     max_depth=5, random_state=42, test_size=0.2 ):
     if not isinstance(feature_df, pd.DataFrame) or not isinstance(anomaly_labels, pd.Series):
-        return None, None, None, "Inputs must be pandas DataFrame and Series."
-    if feature_df.empty or anomaly_labels.empty: return None, None, None, "Input DataFrame or labels Series is empty."
-    if not feature_df.index.equals(anomaly_labels.index): return None, None, None, "Indices must match."
-    if anomaly_labels.nunique() < 2: return None, None, None, "Need at least two distinct classes."
+        msg = "Inputs must be pandas DataFrame and Series."
+        logger.warning(msg)
+        return None, None, None, msg
+    if feature_df.empty or anomaly_labels.empty:
+        msg = "Input DataFrame or labels Series is empty."
+        logger.warning(msg)
+        return None, None, None, msg
+    if not feature_df.index.equals(anomaly_labels.index):
+        msg = "Indices must match."
+        logger.warning(msg)
+        return None, None, None, msg
+    if anomaly_labels.nunique() < 2:
+        msg = "Need at least two distinct classes for surrogate model training."
+        logger.warning(msg)
+        return None, None, None, msg
     X = feature_df; y = anomaly_labels.copy()
     try:
         surrogate_tree = DecisionTreeClassifier(max_depth=max_depth, random_state=random_state, class_weight='balanced')
         report_dict = None
-        if test_size > 0 and test_size < 1 and len(X) * test_size >= 2 and y.nunique() >=2 : # Ensure test set is meaningful
-             # Stratify might fail if a class has only 1 member, common in anomaly detection.
-             # Try-except for stratify, or ensure enough samples per class.
-             # For simplicity, if stratify fails, do non-stratified split.
+        if test_size > 0 and test_size < 1 and len(X) * test_size >= 2 and y.nunique() >=2 :
             try:
                 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state, stratify=y)
-            except ValueError:
+            except ValueError as ve: # Stratify can fail if one class has too few samples
+                logger.warning("Stratified split failed for surrogate model (error: %s), falling back to non-stratified split.", ve)
                 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state)
 
             surrogate_tree.fit(X_train, y_train); y_pred_test = surrogate_tree.predict(X_test)
             unique_labels_y = sorted(y.unique()); unique_labels_pred = sorted(pd.Series(y_pred_test).unique())
-            # Ensure labels used for report match what's in y_test and y_pred_test
             present_labels = sorted(list(set(unique_labels_y).union(set(unique_labels_pred))))
-
-            target_names_report = [f"Class {label}" for label in present_labels]
-            # A more robust way to define target_names based on actual values and user intent:
             class_map = {normal_label_val: "Normal", anomalous_label_val: "Anomalous"}
             target_names_report = [class_map.get(l, f"Class {l}") for l in present_labels]
-
             report_dict = classification_report(y_test, y_pred_test, labels=present_labels, target_names=target_names_report, output_dict=True, zero_division=0)
         else: surrogate_tree.fit(X, y)
         importances = pd.Series(surrogate_tree.feature_importances_, index=X.columns, name="surrogate_tree_feature_importance").sort_values(ascending=False)
         return surrogate_tree, importances, report_dict, None
-    except Exception as e: return None, None, None, f"Error training surrogate tree: {e}"
+    except Exception as e:
+        logger.error("Error training surrogate tree: %s", e, exc_info=True)
+        return None, None, None, f"Error training surrogate tree: {e}"
 
+@st.cache_data
 def generate_cluster_summary_text(
     cluster_id, cluster_size, total_devices,
     cluster_mean_features_for_this_cluster: pd.Series,
@@ -157,6 +224,7 @@ def generate_cluster_summary_text(
     else: text += "Could not compare cluster means."
     return text
 
+@st.cache_data
 def generate_anomaly_summary_text(
     device_id, anomaly_score, top_features_comparison: pd.DataFrame = None,
     surrogate_tree_importances: pd.Series = None, num_features_to_mention=3 ):
@@ -180,6 +248,7 @@ def generate_anomaly_summary_text(
     return text
 
 # --- New Event Correlation Function ---
+@st.cache_data
 def analyze_event_correlations(
     all_device_features_df_with_event_features: pd.DataFrame,
     result_labels: pd.Series,
@@ -187,39 +256,46 @@ def analyze_event_correlations(
 ):
     if not isinstance(all_device_features_df_with_event_features, pd.DataFrame) or \
        not isinstance(result_labels, pd.Series):
-        return None, "Inputs must be pandas DataFrame and Series."
+        msg = "Inputs must be pandas DataFrame and Series."
+        logger.warning(msg)
+        return None, msg
     if all_device_features_df_with_event_features.empty or result_labels.empty:
-        return None, "Input DataFrame or labels Series is empty."
+        msg = "Input DataFrame or labels Series is empty."
+        logger.warning(msg)
+        return None, msg
 
     common_index = all_device_features_df_with_event_features.index.intersection(result_labels.index)
     if common_index.empty:
-        return None, "Feature DataFrame and result labels must have common indices."
+        msg = "Feature DataFrame and result labels must have common indices."
+        logger.warning(msg)
+        return None, msg
     df_aligned = all_device_features_df_with_event_features.loc[common_index]
     labels_aligned = result_labels.loc[common_index]
 
     event_count_cols = [col for col in df_aligned.columns if col.startswith(event_feature_prefix)]
     if not event_count_cols:
-        return None, f"No event count features found with prefix '{event_feature_prefix}'."
+        msg = f"No event count features found with prefix '{event_feature_prefix}'."
+        logger.warning(msg)
+        return None, msg
 
     try:
         event_analysis_df = df_aligned[event_count_cols].groupby(labels_aligned).mean()
         overall_mean_events = df_aligned[event_count_cols].mean()
         overall_mean_events.name = "Overall_Mean"
-        # Use pd.concat to join, ensuring consistent columns even if some groups are missing
         event_analysis_df = pd.concat([event_analysis_df, overall_mean_events.to_frame().T])
 
-        # Make index names more readable
         new_index_names = {}
         for label_val in event_analysis_df.index:
             if label_val == "Overall_Mean": new_index_names[label_val] = "Overall_Mean_Events"
             elif label_val == -1: new_index_names[label_val] = "Anomalous_Mean_Events"
-            elif label_val == 1 and set(labels_aligned.unique()).issubset({-1,1,0}): # Check if it's likely anomaly labels (0 could be uncertain)
+            elif label_val == 1 and set(labels_aligned.unique()).issubset({-1,1,0}):
                  new_index_names[label_val] = "Normal_Mean_Events"
             else: new_index_names[label_val] = f"Cluster_{label_val}_Mean_Events"
         event_analysis_df = event_analysis_df.rename(index=new_index_names)
 
         return event_analysis_df.T, None
     except Exception as e:
+        logger.error("Error during event correlation analysis: %s", e, exc_info=True)
         return None, f"Error during event correlation analysis: {e}"
 
 

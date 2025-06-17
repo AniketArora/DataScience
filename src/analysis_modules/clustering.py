@@ -3,14 +3,19 @@ import numpy as np
 from sklearn.cluster import KMeans, DBSCAN
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import silhouette_score
+import streamlit as st
+import logging
 # For k-need, if we want to use it for Elbow or DBSCAN eps automatically
 # from kneed import KneeLocator # Requires 'kneed' package
 # For now, will implement manual elbow/silhouette plotting guidance
 
+logger = logging.getLogger(__name__)
+
 def scale_features(feature_df: pd.DataFrame):
     """Scales features using StandardScaler."""
     if not isinstance(feature_df, pd.DataFrame) or feature_df.empty:
-        return feature_df, None # Return original if not suitable for scaling, plus an error/None scaler
+        logger.warning("scale_features: Input is not a valid DataFrame or is empty.")
+        return feature_df, None
 
     scaler = StandardScaler()
     try:
@@ -18,11 +23,10 @@ def scale_features(feature_df: pd.DataFrame):
         scaled_feature_df = pd.DataFrame(scaled_features, index=feature_df.index, columns=feature_df.columns)
         return scaled_feature_df, scaler
     except Exception as e:
-        # If scaling fails (e.g., all-NaN column after some upstream processing error)
-        # This shouldn't happen if feature_df is validated (e.g. no NaNs, numeric)
+        logger.error("scale_features: Error during scaling: %s", e, exc_info=True)
         return feature_df, None
 
-
+@st.cache_data
 def perform_kmeans_clustering(feature_df: pd.DataFrame, n_clusters, random_state=42, scale_data=True, **kwargs):
     """
     Performs K-Means clustering on the feature DataFrame.
@@ -41,15 +45,25 @@ def perform_kmeans_clustering(feature_df: pd.DataFrame, n_clusters, random_state
         str or None: An error message if clustering fails.
     """
     if not isinstance(feature_df, pd.DataFrame):
-        return None, None, "Input is not a pandas DataFrame."
+        msg = "Input is not a pandas DataFrame."
+        logger.warning("perform_kmeans_clustering: %s", msg)
+        return None, None, msg
     if feature_df.empty:
-        return None, None, "Input DataFrame is empty."
+        msg = "Input DataFrame is empty."
+        logger.warning("perform_kmeans_clustering: %s", msg)
+        return None, None, msg
     if feature_df.isnull().any().any():
-        return None, None, "Input DataFrame contains NaN values. Please handle them."
+        msg = "Input DataFrame contains NaN values. Please handle them."
+        logger.warning("perform_kmeans_clustering: %s", msg)
+        return None, None, msg
     if n_clusters <= 0:
-        return None, None, "Number of clusters (n_clusters) must be positive."
+        msg = "Number of clusters (n_clusters) must be positive."
+        logger.warning("perform_kmeans_clustering: %s", msg)
+        return None, None, msg
     if n_clusters > len(feature_df):
-        return None, None, f"Number of clusters ({n_clusters}) cannot exceed number of samples ({len(feature_df)})."
+        msg = f"Number of clusters ({n_clusters}) cannot exceed number of samples ({len(feature_df)})."
+        logger.warning("perform_kmeans_clustering: %s", msg)
+        return None, None, msg
 
 
     df_to_cluster = feature_df
@@ -62,8 +76,10 @@ def perform_kmeans_clustering(feature_df: pd.DataFrame, n_clusters, random_state
         labels = pd.Series(kmeans.labels_, index=df_to_cluster.index, name="kmeans_cluster_labels")
         return labels, kmeans, None
     except Exception as e:
+        logger.error("K-Means clustering failed: %s", e, exc_info=True)
         return None, None, f"K-Means clustering failed: {e}"
 
+@st.cache_data
 def get_kmeans_elbow_silhouette_data(feature_df: pd.DataFrame, k_range=range(2, 11), scale_data=True, random_state=42):
     """
     Calculates inertia (WCSS) and silhouette scores for a range of K values for K-Means.
@@ -78,15 +94,30 @@ def get_kmeans_elbow_silhouette_data(feature_df: pd.DataFrame, k_range=range(2, 
         pd.DataFrame: DataFrame with K, Inertia, and Silhouette Score.
         str or None: Error message.
     """
-    if not isinstance(feature_df, pd.DataFrame): return None, "Input is not a pandas DataFrame."
-    if feature_df.empty: return None, "Input DataFrame is empty."
-    if feature_df.isnull().any().any(): return None, "Input DataFrame contains NaN values."
-    # Ensure k_range is valid and max K is less than number of samples
+    if not isinstance(feature_df, pd.DataFrame):
+        msg = "Input is not a pandas DataFrame."
+        logger.warning("get_kmeans_elbow_silhouette_data: %s", msg)
+        return None, msg
+    if feature_df.empty:
+        msg = "Input DataFrame is empty."
+        logger.warning("get_kmeans_elbow_silhouette_data: %s", msg)
+        return None, msg
+    if feature_df.isnull().any().any():
+        msg = "Input DataFrame contains NaN values."
+        logger.warning("get_kmeans_elbow_silhouette_data: %s", msg)
+        return None, msg
+
     min_k = min(k_range) if len(k_range) > 0 else 0
     max_k = max(k_range) if len(k_range) > 0 else 0
 
-    if not k_range or min_k < 2 : return None, "k_range must start from at least 2."
-    if max_k >= len(feature_df): return None, f"Max K in k_range ({max_k}) must be less than number of samples ({len(feature_df)})."
+    if not k_range or min_k < 2 :
+        msg = "k_range must start from at least 2."
+        logger.warning("get_kmeans_elbow_silhouette_data: %s", msg)
+        return None, msg
+    if max_k >= len(feature_df):
+        msg = f"Max K in k_range ({max_k}) must be less than number of samples ({len(feature_df)})."
+        logger.warning("get_kmeans_elbow_silhouette_data: %s", msg)
+        return None, msg
 
 
     df_to_process = feature_df
@@ -111,9 +142,10 @@ def get_kmeans_elbow_silhouette_data(feature_df: pd.DataFrame, k_range=range(2, 
         results_df = pd.DataFrame({'K': list(k_range), 'Inertia': inertia_values, 'Silhouette Score': silhouette_values})
         return results_df, None
     except Exception as e:
+        logger.error("Error calculating K-Means stats: %s", e, exc_info=True)
         return None, f"Error calculating K-Means stats: {e}"
 
-
+@st.cache_data
 def perform_dbscan_clustering(feature_df: pd.DataFrame, eps=0.5, min_samples=5, scale_data=True, **kwargs):
     """
     Performs DBSCAN clustering on the feature DataFrame.
@@ -132,11 +164,17 @@ def perform_dbscan_clustering(feature_df: pd.DataFrame, eps=0.5, min_samples=5, 
         str or None: An error message if clustering fails.
     """
     if not isinstance(feature_df, pd.DataFrame):
-        return None, None, "Input is not a pandas DataFrame."
+        msg = "Input is not a pandas DataFrame."
+        logger.warning("perform_dbscan_clustering: %s", msg)
+        return None, None, msg
     if feature_df.empty:
-        return None, None, "Input DataFrame is empty."
+        msg = "Input DataFrame is empty."
+        logger.warning("perform_dbscan_clustering: %s", msg)
+        return None, None, msg
     if feature_df.isnull().any().any():
-        return None, None, "Input DataFrame contains NaN values. Please handle them."
+        msg = "Input DataFrame contains NaN values. Please handle them."
+        logger.warning("perform_dbscan_clustering: %s", msg)
+        return None, None, msg
 
     df_to_cluster = feature_df
     if scale_data:
@@ -148,6 +186,7 @@ def perform_dbscan_clustering(feature_df: pd.DataFrame, eps=0.5, min_samples=5, 
         labels = pd.Series(dbscan.labels_, index=df_to_cluster.index, name="dbscan_cluster_labels")
         return labels, dbscan, None
     except Exception as e:
+        logger.error("DBSCAN clustering failed: %s", e, exc_info=True)
         return None, None, f"DBSCAN clustering failed: {e}"
 
 if __name__ == '__main__':
