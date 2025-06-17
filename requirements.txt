@@ -2,8 +2,8 @@ streamlit
 pandas
 psycopg2-binary
 elasticsearch>=7.0.0,<8.0.0
-pytest
-pytest-mock
 statsmodels
 scikit-learn
 matplotlib
+pytest
+pytest-mock
