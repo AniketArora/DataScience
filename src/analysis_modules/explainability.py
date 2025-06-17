@@ -7,6 +7,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
 
 
+@st.cache_data
 def get_cluster_feature_summary(feature_df: pd.DataFrame, cluster_labels: pd.Series):
     if not isinstance(feature_df, pd.DataFrame) or not isinstance(cluster_labels, pd.Series):
         return None, "Inputs must be pandas DataFrame and Series."
@@ -28,6 +29,7 @@ def get_cluster_feature_summary(feature_df: pd.DataFrame, cluster_labels: pd.Ser
         return summary_df, None
     except Exception as e: return None, f"Error calculating cluster feature summary: {e}"
 
+@st.cache_data
 def get_feature_importance_for_clusters_anova(feature_df: pd.DataFrame, cluster_labels: pd.Series):
     if not isinstance(feature_df, pd.DataFrame) or not isinstance(cluster_labels, pd.Series):
         return None, "Inputs must be pandas DataFrame and Series."
@@ -52,6 +54,7 @@ def get_feature_importance_for_clusters_anova(feature_df: pd.DataFrame, cluster_
     importance_df = pd.DataFrame({'Feature': features, 'F-Value': f_values, 'P-Value': p_values})
     return importance_df.sort_values(by='F-Value', ascending=False).reset_index(drop=True), None
 
+@st.cache_data
 def compare_anomalous_vs_normal_features(feature_df: pd.DataFrame, anomaly_labels: pd.Series, anomalous_label_val=-1):
     if not isinstance(feature_df, pd.DataFrame) or not isinstance(anomaly_labels, pd.Series):
         return None, "Inputs must be pandas DataFrame and Series."
@@ -84,6 +87,7 @@ def compare_anomalous_vs_normal_features(feature_df: pd.DataFrame, anomaly_label
         return comparison_df.sort_values(by='Difference (Anomalous - Normal)', key=abs, ascending=False), None
     except Exception as e: return None, f"Error comparing features: {e}"
 
+@st.cache_data
 def explain_anomalies_with_surrogate_model(
     feature_df: pd.DataFrame, anomaly_labels: pd.Series, anomalous_label_val=-1, normal_label_val=1,
     max_depth=5, random_state=42, test_size=0.2 ):
@@ -121,6 +125,7 @@ def explain_anomalies_with_surrogate_model(
         return surrogate_tree, importances, report_dict, None
     except Exception as e: return None, None, None, f"Error training surrogate tree: {e}"
 
+@st.cache_data
 def generate_cluster_summary_text(
     cluster_id, cluster_size, total_devices,
     cluster_mean_features_for_this_cluster: pd.Series,
@@ -157,6 +162,7 @@ def generate_cluster_summary_text(
     else: text += "Could not compare cluster means."
     return text
 
+@st.cache_data
 def generate_anomaly_summary_text(
     device_id, anomaly_score, top_features_comparison: pd.DataFrame = None,
     surrogate_tree_importances: pd.Series = None, num_features_to_mention=3 ):
@@ -180,6 +186,7 @@ def generate_anomaly_summary_text(
     return text
 
 # --- New Event Correlation Function ---
+@st.cache_data
 def analyze_event_correlations(
     all_device_features_df_with_event_features: pd.DataFrame,
     result_labels: pd.Series,

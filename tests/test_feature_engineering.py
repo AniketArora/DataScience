@@ -221,3 +221,119 @@ def test_generate_all_features_constant_series(constant_series):
     features = generate_all_features_for_series(constant_series, name="ts_")
     assert features['ts_roll_mean_of_stds_w5'] == 0.0
     assert pd.isna(features['ts_acf_acf_lag_1'])
+
+
+# --- Tests for run_feature_engineering_for_all_devices ---
+
+@pytest.fixture
+def sample_data_for_orchestration():
+    # Create sample data that can be used by run_feature_engineering_for_all_devices
+    data = {
+        'device_id': ['dev1', 'dev1', 'dev1', 'dev2', 'dev2', 'dev2', 'dev3', 'dev3'],
+        'timestamp': pd.to_datetime([
+            '2023-01-01 00:00:00', '2023-01-01 00:01:00', '2023-01-01 00:02:00',
+            '2023-01-01 00:00:00', '2023-01-01 00:01:00', '2023-01-01 00:02:00',
+            '2023-01-01 00:00:00', '2023-01-01 00:01:00' # dev3 has shorter series
+        ]),
+        'value': [10, 12, 11, 20, 22, 21, 30, 31]
+    }
+    data_df_original = pd.DataFrame(data)
+
+    ts_specs = {
+        "id_cols": ["device_id"],
+        "timestamp_col": "timestamp",
+        "selected_value_col_for_analysis": "value",
+        "event_device_id_col": "device_id", # Assuming events also use 'device_id'
+        "event_timestamp_col": "event_timestamp",
+        "event_event_type_col": "event_type",
+        "top_n_event_types_for_series_features": 2 # For testing this new pass-through
+    }
+
+    event_data = {
+        'device_id': ['dev1', 'dev1', 'dev2'],
+        'event_timestamp': pd.to_datetime(['2023-01-01 00:00:30', '2023-01-01 00:01:30', '2023-01-01 00:00:30']),
+        'event_type': ['Error_X', 'Warning_Y', 'Error_X']
+    }
+    event_df = pd.DataFrame(event_data)
+    global_top_event_types_cleaned = ["Error_X", "Warning_Y", "Info_Z"]
+
+    return data_df_original, ts_specs, event_df, global_top_event_types_cleaned
+
+@patch('src.analysis_modules.feature_engineering.generate_all_features_for_series')
+def test_run_all_devices_success(mock_generate_features, sample_data_for_orchestration):
+    data_df, ts_specs, event_df, global_events = sample_data_for_orchestration
+
+    # Configure the mock to return a consistent, simple DataFrame (pd.Series)
+    # The name of the series returned by generate_all_features_for_series doesn't matter here
+    # as run_feature_engineering_for_all_devices converts it to a DataFrame row.
+    mock_feature_series = pd.Series({
+        f'{ts_specs["selected_value_col_for_analysis"]}_basic_mean': 10.5,
+        f'{ts_specs["selected_value_col_for_analysis"]}_basic_std': 1.5,
+        f'{ts_specs["selected_value_col_for_analysis"]}_evt_count_Error_X': 1.0 # Example event feature
+    })
+    # The generate_all_features_for_series function is expected to return (features_series, error_msg_feat)
+    mock_generate_features.return_value = (mock_feature_series, None)
+
+    # Import here to avoid issues if this file is imported elsewhere without src in path for main.py level imports
+    from src.analysis_modules.feature_engineering import run_feature_engineering_for_all_devices
+
+    result_df = run_feature_engineering_for_all_devices(
+        data_df, ts_specs, event_df, global_events
+    )
+
+    assert not result_df.empty
+    assert len(result_df) == 3 # dev1, dev2, dev3
+    assert mock_generate_features.call_count == 3 # Called for each device
+
+    # Check if columns from the mock_feature_series are present
+    for col in mock_feature_series.index:
+        assert col in result_df.columns
+
+    # Verify that the arguments passed to generate_all_features_for_series for the event part are correct
+    # Example: Check the last call's kwargs for 'all_possible_event_types' and 'top_n_event_types_to_focus'
+    last_call_args, last_call_kwargs = mock_generate_features.call_args_list[-1]
+    assert last_call_kwargs.get('all_possible_event_types') == global_events
+    assert last_call_kwargs.get('top_n_event_types_to_focus') == ts_specs['top_n_event_types_for_series_features']
+
+
+def test_run_all_devices_empty_input(sample_data_for_orchestration):
+    _, ts_specs, event_df, global_events = sample_data_for_orchestration
+    empty_df = pd.DataFrame(columns=['device_id', 'timestamp', 'value'])
+
+    from src.analysis_modules.feature_engineering import run_feature_engineering_for_all_devices
+    result_df = run_feature_engineering_for_all_devices(
+        empty_df, ts_specs, event_df, global_events
+    )
+    assert result_df.empty
+
+@patch('src.analysis_modules.feature_engineering.generate_all_features_for_series')
+def test_run_all_devices_generate_features_returns_error_or_none(mock_generate_features, sample_data_for_orchestration):
+    data_df, ts_specs, event_df, global_events = sample_data_for_orchestration
+
+    # Configure mock: dev1 success, dev2 returns (None, "Error"), dev3 returns (empty Series, None)
+    mock_series_dev1 = pd.Series({'value_basic_mean': 10, 'value_basic_std': 1})
+
+    def side_effect_func(series, name, device_event_df, all_possible_event_types, top_n_event_types_to_focus):
+        # Simulate different outcomes based on series name (derived from device_id indirectly)
+        # This is a bit indirect as the direct device_id isn't passed to generate_all_features.
+        # We'll use the length of the series as a proxy for this test.
+        if len(series) == 3: # Corresponds to dev1's initial series length
+            return (mock_series_dev1, None)
+        elif len(series) == 2: # dev3
+            return (pd.Series(dtype=float), None) # Empty series
+        else: # Default for any other case, or make more specific if needed
+             return (None, "Simulated processing error")
+
+
+    mock_generate_features.side_effect = side_effect_func
+
+    from src.analysis_modules.feature_engineering import run_feature_engineering_for_all_devices
+    result_df = run_feature_engineering_for_all_devices(
+        data_df, ts_specs, event_df, global_events
+    )
+
+    assert not result_df.empty
+    assert len(result_df) == 1 # Only dev1 should succeed
+    assert result_df.index[0] == 'dev1' # Assuming 'dev1' is processed successfully
+    assert 'value_basic_mean' in result_df.columns
+    assert mock_generate_features.call_count == 3 # Called for each device

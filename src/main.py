@@ -2,8 +2,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np # For NaNs if needed in session state init
 import json # For future save/load, good to have early
+import concurrent.futures
 
 # --- Utility / Helper Functions (e.g., config_utils if not separate) ---
+
 # For now, keep reset function here. config_utils can be for save/load later.
 def reset_all_dependent_states(clear_data_too=False):
     """Resets session state variables that depend on loaded data or settings."""
@@ -63,9 +65,14 @@ if 'event_df' not in st.session_state:
 if 'time_series_specs' not in st.session_state: # Ensure this dict exists
     reset_all_dependent_states() # Call once to initialize all sub-keys
 
+if 'feature_computation_future' not in st.session_state:
+    st.session_state.feature_computation_future = None
+if 'feature_computation_running' not in st.session_state:
+    st.session_state.feature_computation_running = False
+
 # --- Imports for modules (will be used later but good to have grouped) ---
 import matplotlib.pyplot as plt
-# from src.database import ... (will add specific functions as needed)
+from src.database import connect_postgres, get_schemas_postgres, get_tables_postgres, fetch_data_postgres
 from src.analysis_modules.profiling import (
     get_series_summary_stats,
     get_missing_values_summary,
@@ -78,7 +85,7 @@ from src.analysis_modules.anomalies import (
     detect_anomalies_isolation_forest,
     detect_anomalies_one_class_svm
 )
-from src.analysis_modules.feature_engineering import generate_all_features_for_series
+from src.analysis_modules.feature_engineering import generate_all_features_for_series, run_feature_engineering_for_all_devices
 from src.analysis_modules.clustering import (
     perform_kmeans_clustering,
     get_kmeans_elbow_silhouette_data,
@@ -154,25 +161,120 @@ if app_mode == "General Analysis":
     #   reset_all_dependent_states() # Keep existing event_df, db_conn
     #   st.session_state.data_df = st.session_state.data_df_original.copy()
 
-    # --- Placeholder for actual DB connection UI ---
-    # This will be filled in a subsequent step to keep this subtask focused.
-    # For now, we need a way to get data in for testing UI parts.
-    st.sidebar.header("Data Loading (TEMP)")
-    uploaded_main_data_file = st.sidebar.file_uploader("Upload Main Data (CSV/Excel) - TEMP for UI dev", type=['csv', 'xlsx'], key="temp_main_data_uploader")
-    if uploaded_main_data_file:
-        if st.sidebar.button("Load Temporary Main Data", key="load_temp_main_data_button"):
-            try:
-                if uploaded_main_data_file.name.endswith('.csv'):
-                    df_main = pd.read_csv(uploaded_main_data_file)
-                else:
-                    df_main = pd.read_excel(uploaded_main_data_file)
+    # --- Database Connection UI (Sidebar) ---
+    st.sidebar.header("PostgreSQL Connection")
+    st.session_state.db_host = st.sidebar.text_input("Host", value=st.session_state.db_host, key="pg_host_input")
+    st.session_state.db_port = st.sidebar.text_input("Port", value=st.session_state.db_port, key="pg_port_input")
+    st.session_state.db_name = st.sidebar.text_input("Database Name", value=st.session_state.db_name, key="pg_dbname_input")
+    st.session_state.db_user = st.sidebar.text_input("User", value=st.session_state.db_user, key="pg_user_input")
+    st.session_state.db_password = st.sidebar.text_input("Password", type="password", value=st.session_state.db_password, key="pg_password_input")
 
-                st.session_state.data_df_original = df_main
-                reset_all_dependent_states() # Reset other states, but keeps data_df_original
-                st.session_state.data_df = st.session_state.data_df_original.copy()
-                st.sidebar.success(f"Loaded temporary main data: {st.session_state.data_df_original.shape}")
-            except Exception as e:
-                st.sidebar.error(f"Error loading temp main data: {e}")
+    if st.sidebar.button("Connect to PostgreSQL", key="pg_connect_button"):
+        db_config = {
+            "host": st.session_state.db_host,
+            "port": st.session_state.db_port,
+            "dbname": st.session_state.db_name,
+            "user": st.session_state.db_user,
+            "password": st.session_state.db_password,
+        }
+        conn, err_msg = connect_postgres(db_config)
+        if err_msg:
+            st.sidebar.error(f"Connection Failed: {err_msg}")
+            st.session_state.db_conn = None
+            st.session_state.available_schemas = [] # Clear schemas on failed connection
+            st.session_state.available_tables = []  # Clear tables on failed connection
+            st.session_state.selected_schema = None
+            st.session_state.selected_table = None
+        else:
+            st.session_state.db_conn = conn
+            st.sidebar.success("Successfully connected to PostgreSQL!")
+            # Fetch schemas immediately after successful connection
+            schemas, err_schemas = get_schemas_postgres(st.session_state.db_conn)
+            if err_schemas:
+                st.sidebar.error(f"Error fetching schemas: {err_schemas}")
+                st.session_state.available_schemas = []
+            else:
+                st.session_state.available_schemas = ["None"] + (schemas if schemas else [])
+            st.session_state.selected_schema = "None" # Reset schema selection
+            st.session_state.available_tables = [] # Reset table list
+            st.session_state.selected_table = None # Reset table selection
+
+    # Schema and Table Selection
+    if st.session_state.db_conn:
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("Schema and Table Selection")
+
+        # Ensure "None" is the first option if available_schemas is populated
+        current_schema_options = st.session_state.get('available_schemas', ["None"])
+        if not current_schema_options: # Should not happen if connection was successful and fetched
+             current_schema_options = ["None"]
+        elif "None" not in current_schema_options and current_schema_options != ["None"]: # handles empty list from failed fetch
+             current_schema_options = ["None"] + current_schema_options
+
+
+        selected_schema_val = st.sidebar.selectbox(
+            "Select Schema",
+            options=current_schema_options,
+            index=current_schema_options.index(st.session_state.selected_schema) if st.session_state.selected_schema in current_schema_options else 0,
+            key="pg_schema_select",
+        )
+
+        if selected_schema_val != st.session_state.selected_schema:
+            st.session_state.selected_schema = selected_schema_val
+            if selected_schema_val != "None":
+                tables, err_tables = get_tables_postgres(st.session_state.db_conn, selected_schema_val)
+                if err_tables:
+                    st.sidebar.error(f"Error fetching tables: {err_tables}")
+                    st.session_state.available_tables = ["None"]
+                else:
+                    st.session_state.available_tables = ["None"] + (tables if tables else [])
+            else:
+                st.session_state.available_tables = ["None"]
+            st.session_state.selected_table = "None" # Reset table selection when schema changes
+
+        if st.session_state.selected_schema and st.session_state.selected_schema != "None":
+            current_table_options = st.session_state.get('available_tables', ["None"])
+            if not current_table_options: # Safety for empty list
+                current_table_options = ["None"]
+            elif "None" not in current_table_options and current_table_options != ["None"]:
+                 current_table_options = ["None"] + current_table_options
+
+            selected_table_val = st.sidebar.selectbox(
+                "Select Table",
+                options=current_table_options,
+                index=current_table_options.index(st.session_state.selected_table) if st.session_state.selected_table in current_table_options else 0,
+                key="pg_table_select",
+            )
+            st.session_state.selected_table = selected_table_val
+        else:
+            # Ensure selected_table is reset if no schema is selected
+            st.session_state.selected_table = "None"
+
+        # Data Fetching Button
+        if st.session_state.selected_schema and st.session_state.selected_schema != "None" and \
+           st.session_state.selected_table and st.session_state.selected_table != "None":
+            if st.sidebar.button("Fetch Data from Table", key="pg_fetch_data_button"):
+                limit_val_pg = 20000 # Default limit, can be made configurable
+                # limit_val_pg = st.sidebar.number_input("Max rows to fetch", min_value=100, value=20000, step=100, key="pg_fetch_limit")
+
+                df, err_fetch = fetch_data_postgres(
+                    st.session_state.db_conn,
+                    st.session_state.selected_schema,
+                    st.session_state.selected_table,
+                    limit=limit_val_pg
+                )
+                if err_fetch:
+                    st.sidebar.error(f"Error fetching data: {err_fetch}")
+                    # Optionally clear data if fetch fails
+                    # st.session_state.data_df_original = pd.DataFrame()
+                    # st.session_state.data_df = pd.DataFrame()
+                else:
+                    st.session_state.data_df_original = df
+                    reset_all_dependent_states(clear_data_too=False) # Reset downstream, keep new data
+                    st.session_state.data_df = st.session_state.data_df_original.copy()
+                    st.sidebar.success(f"Fetched data from '{st.session_state.selected_schema}.{st.session_state.selected_table}'. Shape: {df.shape}")
+        else:
+            st.sidebar.info("Select a schema and table to enable data fetching.")
 
 
     # --- Event Data Upload (Sidebar) ---
@@ -369,14 +471,45 @@ if app_mode == "General Analysis":
         st.sidebar.warning("Load data and select Timestamp & a specific Value/Metric in 'Time Series Settings' to enable population feature computation.")
 
     if st.sidebar.button("Compute Features for ALL Devices", key="compute_all_features_button_general", disabled=compute_all_button_disabled_main):
-        st.session_state.running_all_features_computation = True # Flag to trigger computation in main area
-        # Reset downstream results that depend on all_device_features_df
-        st.session_state.all_device_features_df = pd.DataFrame() # Clear previous features
-        st.session_state.population_anomaly_results = {}
-        st.session_state.clustering_results = {}
-        st.session_state.kmeans_stats_df = None
-        st.session_state.res_df_anomalies_sorted = pd.DataFrame()
-        st.session_state.surrogate_tree_explainer = None
+        if st.session_state.get('feature_computation_running', False):
+            st.sidebar.warning("Feature computation is already in progress.")
+        else:
+            st.session_state.running_all_features_computation = True  # UI flag to show "processing" section
+            st.session_state.feature_computation_running = True     # Actual flag for background task status
+            st.session_state.feature_computation_future = None      # Reset future object
+
+            # Reset downstream results that depend on all_device_features_df
+            st.session_state.all_device_features_df = pd.DataFrame()
+            st.session_state.population_anomaly_results = {}
+            st.session_state.clustering_results = {}
+            st.session_state.kmeans_stats_df = None
+            st.session_state.res_df_anomalies_sorted = pd.DataFrame()
+            st.session_state.surrogate_tree_explainer = None
+
+            # Prepare data for the executor
+            data_df_original_serializable = st.session_state.data_df_original.copy()
+            ts_specs_serializable = st.session_state.time_series_specs.copy()
+            event_df_serializable = st.session_state.event_df.copy()
+            global_top_event_types_cleaned_serializable = list(st.session_state.get("global_top_event_types_cleaned", []))
+
+            try:
+                # Using max_workers=1 to avoid overwhelming resources or ProcessPoolExecutor issues on some platforms
+                executor = concurrent.futures.ProcessPoolExecutor(max_workers=1)
+                st.session_state.feature_computation_future = executor.submit(
+                    run_feature_engineering_for_all_devices,
+                    data_df_original_serializable,
+                    ts_specs_serializable,
+                    event_df_serializable,
+                    global_top_event_types_cleaned_serializable
+                )
+                executor.shutdown(wait=False) # Shutdown without waiting for tasks to complete here
+                st.sidebar.info("Feature computation started in the background.")
+            except Exception as e:
+                st.sidebar.error(f"Failed to start feature computation: {e}")
+                st.session_state.feature_computation_running = False
+                st.session_state.running_all_features_computation = False # Reset UI flag too
+
+            st.experimental_rerun() # Rerun to update UI
 
     # --- Save/Load App State ---
     st.sidebar.markdown("---")
@@ -624,107 +757,41 @@ if app_mode == "General Analysis":
     else:
         st.session_state.global_top_event_types_cleaned = []
 
+    # --- Handle Background Feature Computation Status ---
+    if st.session_state.get('feature_computation_running', False) and st.session_state.get('feature_computation_future') is not None:
+        future = st.session_state.feature_computation_future
+        if future.running():
+            st.info("Feature computation is running in the background. Please wait... The UI remains interactive. Results will appear below once complete.")
+            # To prevent immediate re-runs and allow the future to progress, we might add a small delay or avoid auto-rerun here.
+            # However, Streamlit's nature is to rerun on interaction. The key is that `future.running()` will keep showing this.
+        elif future.done():
+            try:
+                result_df = future.result()
+                st.session_state.all_device_features_df = result_df
+                if not result_df.empty:
+                    st.success(f"Feature computation complete. Generated features for {len(result_df)} devices/entities.")
+                else:
+                    st.warning("Feature computation completed but returned no features. This might be due to data issues or filtering during the process.")
+            except Exception as e:
+                st.session_state.all_device_features_df = pd.DataFrame() # Ensure it's empty on error
+                st.error(f"Feature computation failed: {e}")
+                # Detailed error logging can be added here for server logs
+                print(f"Background feature computation error: {e}") # Print to console for debugging
+            finally:
+                st.session_state.feature_computation_running = False
+                st.session_state.feature_computation_future = None
+                st.session_state.running_all_features_computation = False # Reset UI display flag
+                st.experimental_rerun() # Rerun to show results or updated state
 
-    if st.session_state.get("running_all_features_computation"):
+    # This section is now primarily for displaying messages while running_all_features_computation is true
+    # OR if the computation has just been triggered and the future isn't resolved yet.
+    elif st.session_state.get("running_all_features_computation"): # Catches the state where button was clicked but future not yet checked
         st.header("Device Behavior Feature Engineering (All Devices)")
-        if not st.session_state.data_df_original.empty and \
-           ts_specs.get("timestamp_col", "None") != "None" and \
-           ts_specs.get("selected_value_col_for_analysis", "None") != "None":
+        st.info("Initializing feature computation... If this message persists, check for errors in the console or sidebar.")
+        # This state should quickly transition to the above block checking the future object on the next rerun.
 
-            df_for_all_features = st.session_state.data_df_original.copy()
-            id_cols_for_all = ts_specs["id_cols"]
-            ts_col_for_all = ts_specs["timestamp_col"]
-            val_col_to_process_for_all = ts_specs["selected_value_col_for_analysis"] # Use the one selected for single series as the target
-
-            # Create a temporary composite ID if multiple ID columns are selected
-            temp_id_col_name_all_features = "_temp_unique_id_all_features_"
-            if id_cols_for_all:
-                df_for_all_features[temp_id_col_name_all_features] = df_for_all_features[id_cols_for_all].astype(str).agg('-'.join, axis=1)
-                unique_entities = sorted(df_for_all_features[temp_id_col_name_all_features].unique())
-            else: # No ID column, treat as single entity "DefaultTimeSeries"
-                df_for_all_features[temp_id_col_name_all_features] = "DefaultTimeSeries"
-                unique_entities = ["DefaultTimeSeries"]
-
-            all_features_list = []
-            progress_bar_all = st.progress(0)
-            total_entities = len(unique_entities)
-
-            event_df_main_for_all = st.session_state.get('event_df', pd.DataFrame())
-            event_id_col_main_all = ts_specs.get('event_device_id_col', 'device_id')
-            event_type_col_main_all = ts_specs.get('event_event_type_col', 'event_type')
-            event_ts_col_main_all = ts_specs.get('event_timestamp_col', 'timestamp')
-
-
-            with st.spinner(f"Processing {total_entities} devices/entities..."):
-                for i, entity_id_val in enumerate(unique_entities):
-                    entity_df_all = df_for_all_features[df_for_all_features[temp_id_col_name_all_features] == entity_id_val]
-                    try:
-                        entity_df_all[ts_col_for_all] = pd.to_datetime(entity_df_all[ts_col_for_all], errors='coerce')
-                        entity_df_all = entity_df_all.dropna(subset=[ts_col_for_all, val_col_to_process_for_all])
-
-                        if entity_df_all.empty:
-                            st.warning(f"Skipping {entity_id_val}: No valid data after NA drop for {val_col_to_process_for_all} or {ts_col_for_all}.")
-                            continue
-
-                        entity_df_all = entity_df_all.sort_values(by=ts_col_for_all)
-                        processed_entity_series_all = entity_df_all.groupby(ts_col_for_all)[val_col_to_process_for_all].mean().rename(val_col_to_process_for_all)
-
-                        if processed_entity_series_all.empty or len(processed_entity_series_all) < 2: # Need at least 2 points for some features
-                            st.warning(f"Skipping {entity_id_val}: Series too short after processing (length {len(processed_entity_series_all)}).")
-                            continue
-
-                        # Filter event data for this specific entity
-                        device_specific_events_all = pd.DataFrame()
-                        if not event_df_main_for_all.empty and id_cols_for_all and entity_id_val != "DefaultTimeSeries":
-                            if event_id_col_main_all in event_df_main_for_all.columns:
-                                device_specific_events_all = event_df_main_for_all[event_df_main_for_all[event_id_col_main_all].astype(str) == str(entity_id_val)]
-                        elif not event_df_main_for_all.empty and not id_cols_for_all and entity_id_val == "DefaultTimeSeries": # Events for the whole dataset
-                             device_specific_events_all = event_df_main_for_all
-
-
-                        features_series, error_msg_feat = generate_all_features_for_series(
-                            processed_entity_series_all,
-                            name=f"{val_col_to_process_for_all}_", # Prefix for feature names
-                            device_event_df=device_specific_events_all if not device_specific_events_all.empty else None,
-                            all_possible_event_types=st.session_state.get("global_top_event_types_cleaned", []),
-                            event_type_col=event_type_col_main_all,
-                            event_ts_col=event_ts_col_main_all
-                        )
-                        if error_msg_feat:
-                            st.warning(f"Could not generate features for {entity_id_val}: {error_msg_feat}")
-                            continue
-                        if features_series is not None and not features_series.empty:
-                            features_series_df = features_series.to_frame().T # Transpose to make it a row
-                            features_series_df.index = [entity_id_val] # Set index to entity ID
-                            all_features_list.append(features_series_df)
-                        else:
-                            st.warning(f"No features generated for {entity_id_val}.")
-
-                    except Exception as e_feat_loop:
-                        st.error(f"Error processing {entity_id_val}: {e_feat_loop}")
-                    progress_bar_all.progress((i + 1) / total_entities)
-
-            if all_features_list:
-                st.session_state.all_device_features_df = pd.concat(all_features_list)
-                # Clean up: remove columns that are all NaN (if any feature wasn't applicable to any series)
-                st.session_state.all_device_features_df.dropna(axis=1, how='all', inplace=True)
-                st.success(f"Generated features for {len(all_features_list)} devices/entities.")
-            else:
-                st.session_state.all_device_features_df = pd.DataFrame() # Ensure it's an empty DF
-                st.warning("No features were generated for any device/entity.")
-
-            if temp_id_col_name_all_features in df_for_all_features.columns and id_cols_for_all: # Clean up temp ID col from original df if it was added
-                 # This was on a copy, so original st.session_state.data_df_original is fine.
-                 pass
-
-
-        else:
-            st.error("Cannot compute all device features. Ensure data is loaded and Timestamp & Value/Metric columns are selected in 'Time Series Settings'.")
-
-        st.session_state.running_all_features_computation = False # Reset flag
-        st.experimental_rerun() # Rerun to show results and enable next sections
-
-    if not st.session_state.all_device_features_df.empty:
+    # Display results if available and not currently running
+    if not st.session_state.get('feature_computation_running', False) and not st.session_state.all_device_features_df.empty:
         st.subheader("Overview of All Device Features")
         st.dataframe(st.session_state.all_device_features_df.head())
         st.info(f"Feature matrix shape: {st.session_state.all_device_features_df.shape}")

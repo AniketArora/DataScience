@@ -186,6 +186,7 @@ def extract_event_features_for_series(
 
     return features
 
+@st.cache_data
 def generate_all_features_for_series(series: pd.Series, name="ts_",
                                      device_event_df: pd.DataFrame = None,
                                      all_possible_event_types: list = None,
@@ -289,3 +290,96 @@ if __name__ == '__main__':
         top_n_event_types_to_focus=3 # extract_event_features will focus on top 3 local, generate_all ensures all global are present
     )
     print(event_features_complex[event_features_complex.index.str.startswith("complex_evt_")])
+
+
+# --- Function to be run in ProcessPoolExecutor ---
+def run_feature_engineering_for_all_devices(
+    data_df_original_serializable: pd.DataFrame,
+    ts_specs_serializable: dict,
+    event_df_serializable: pd.DataFrame,
+    global_top_event_types_cleaned_serializable: list
+):
+    """
+    Computes features for all devices/entities.
+    This function is designed to be run in a ProcessPoolExecutor.
+    It calls generate_all_features_for_series for each entity.
+    """
+    if data_df_original_serializable.empty or \
+       ts_specs_serializable.get("timestamp_col", "None") == "None" or \
+       ts_specs_serializable.get("selected_value_col_for_analysis", "None") == "None":
+        return pd.DataFrame()
+
+    df_for_all_features = data_df_original_serializable.copy()
+    id_cols_for_all = ts_specs_serializable["id_cols"]
+    ts_col_for_all = ts_specs_serializable["timestamp_col"]
+    val_col_to_process_for_all = ts_specs_serializable["selected_value_col_for_analysis"]
+
+    temp_id_col_name_all_features = "_temp_unique_id_all_features_"
+    if id_cols_for_all:
+        df_for_all_features[temp_id_col_name_all_features] = df_for_all_features[id_cols_for_all].astype(str).agg('-'.join, axis=1)
+        unique_entities = sorted(df_for_all_features[temp_id_col_name_all_features].unique())
+    else:
+        df_for_all_features[temp_id_col_name_all_features] = "DefaultTimeSeries"
+        unique_entities = ["DefaultTimeSeries"]
+
+    all_features_list = []
+
+    event_df_main_for_all = event_df_serializable
+    event_id_col_main_all = ts_specs_serializable.get('event_device_id_col', 'device_id')
+    event_type_col_main_all = ts_specs_serializable.get('event_event_type_col', 'event_type')
+    event_ts_col_main_all = ts_specs_serializable.get('event_timestamp_col', 'timestamp')
+    # Determine top_n_event_types_to_focus for generate_all_features_for_series
+    # This could be a fixed number or passed in ts_specs_serializable if made configurable
+    top_n_event_types_focus = ts_specs_serializable.get('top_n_event_types_for_series_features', 5)
+
+
+    for i, entity_id_val in enumerate(unique_entities):
+        entity_df_all = df_for_all_features[df_for_all_features[temp_id_col_name_all_features] == entity_id_val]
+        try:
+            entity_df_all[ts_col_for_all] = pd.to_datetime(entity_df_all[ts_col_for_all], errors='coerce')
+            entity_df_all = entity_df_all.dropna(subset=[ts_col_for_all, val_col_to_process_for_all])
+
+            if entity_df_all.empty:
+                continue
+
+            entity_df_all = entity_df_all.sort_values(by=ts_col_for_all)
+            processed_entity_series_all = entity_df_all.groupby(ts_col_for_all)[val_col_to_process_for_all].mean().rename(val_col_to_process_for_all)
+
+            if processed_entity_series_all.empty or len(processed_entity_series_all) < 2:
+                continue
+
+            device_specific_events_all = pd.DataFrame()
+            if not event_df_main_for_all.empty and id_cols_for_all and entity_id_val != "DefaultTimeSeries":
+                if event_id_col_main_all in event_df_main_for_all.columns:
+                    # Ensure consistent data types for comparison if IDs are numeric/string mixes
+                    device_specific_events_all = event_df_main_for_all[event_df_main_for_all[event_id_col_main_all].astype(str) == str(entity_id_val)]
+            elif not event_df_main_for_all.empty and not id_cols_for_all and entity_id_val == "DefaultTimeSeries": # Events for the whole dataset
+                 device_specific_events_all = event_df_main_for_all
+
+            features_series, error_msg_feat = generate_all_features_for_series(
+                processed_entity_series_all,
+                name=f"{val_col_to_process_for_all}_",
+                device_event_df=device_specific_events_all if not device_specific_events_all.empty else None,
+                all_possible_event_types=global_top_event_types_cleaned_serializable, # Pass the global list
+                top_n_event_types_to_focus=top_n_event_types_focus # Use the determined focus number
+            )
+
+            if error_msg_feat: # generate_all_features_for_series now returns tuple (Series|None, error_msg|None)
+                # Log error_msg_feat if logging is set up
+                print(f"Feature generation error for {entity_id_val}: {error_msg_feat}")
+                continue
+            if features_series is not None and not features_series.empty:
+                features_series_df = features_series.to_frame().T
+                features_series_df.index = [entity_id_val]
+                all_features_list.append(features_series_df)
+
+        except Exception as e_feat_loop:
+            print(f"Error processing entity {entity_id_val} in background: {e_feat_loop}")
+            continue
+
+    if all_features_list:
+        final_features_df = pd.concat(all_features_list)
+        final_features_df.dropna(axis=1, how='all', inplace=True)
+        return final_features_df
+    else:
+        return pd.DataFrame()

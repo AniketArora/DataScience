@@ -1,155 +1,209 @@
-import pytest
-from unittest.mock import patch, MagicMock
+import unittest
+from unittest.mock import patch, MagicMock, call
 import pandas as pd
 import psycopg2 # Import for psycopg2.Error
-from elasticsearch import Elasticsearch, ConnectionError as ESConnectionError # Import for ES errors
 
 # Assuming your database.py file is in src directory and src is in PYTHONPATH
 from src.database import (
-    connect_postgres, fetch_postgres_data,
-    connect_elasticsearch, fetch_elasticsearch_data
+    connect_postgres,
+    get_schemas_postgres,
+    get_tables_postgres,
+    fetch_data_postgres
 )
 
-# --- PostgreSQL Tests ---
-@patch('src.database.psycopg2.connect')
-def test_connect_postgres_success(mock_connect):
-    mock_conn = MagicMock()
-    mock_connect.return_value = mock_conn
-    conn = connect_postgres("host", "port", "dbname", "user", "password")
-    mock_connect.assert_called_once_with(
-        host="host", port="port", dbname="dbname", user="user", password="password"
-    )
-    assert conn == mock_conn
+class TestDatabaseUtils(unittest.TestCase):
 
-@patch('src.database.psycopg2.connect')
-@patch('src.database.st') # Mock Streamlit
-def test_connect_postgres_failure(mock_st, mock_connect):
-    mock_connect.side_effect = psycopg2.Error("Connection failed")
-    conn = connect_postgres("host", "port", "dbname", "user", "password")
-    assert conn is None
-    mock_st.error.assert_called_once_with("Error connecting to PostgreSQL: Connection failed")
+    def test_connect_postgres_success(self):
+        with patch('src.database.psycopg2.connect') as mock_psycopg2_connect:
+            mock_conn_obj = MagicMock()
+            mock_psycopg2_connect.return_value = mock_conn_obj
+            db_config = {"host": "localhost", "port": "5432", "dbname": "testdb", "user": "testuser", "password": "testpassword"}
 
-@patch('src.database.pd.read_sql_query')
-def test_fetch_postgres_data_success(mock_read_sql):
-    mock_conn = MagicMock()
-    expected_df = pd.DataFrame({'col1': [1, 2], 'col2': ['a', 'b']})
-    mock_read_sql.return_value = expected_df
-    query = "SELECT * FROM test_table"
+            conn, err = connect_postgres(db_config)
 
-    df = fetch_postgres_data(mock_conn, query)
+            mock_psycopg2_connect.assert_called_once_with(**db_config)
+            self.assertEqual(conn, mock_conn_obj)
+            self.assertIsNone(err)
 
-    mock_read_sql.assert_called_once_with(query, mock_conn)
-    pd.testing.assert_frame_equal(df, expected_df)
+    def test_connect_postgres_failure(self):
+        with patch('src.database.psycopg2.connect') as mock_psycopg2_connect:
+            mock_psycopg2_connect.side_effect = psycopg2.Error("Connection failed")
+            db_config = {"host": "localhost", "port": "5432", "dbname": "testdb", "user": "testuser", "password": "testpassword"}
 
-@patch('src.database.pd.read_sql_query')
-@patch('src.database.st') # Mock Streamlit
-def test_fetch_postgres_data_failure(mock_st, mock_read_sql):
-    mock_conn = MagicMock()
-    mock_read_sql.side_effect = Exception("Query failed")
-    query = "SELECT * FROM test_table"
+            conn, err = connect_postgres(db_config)
 
-    df = fetch_postgres_data(mock_conn, query)
+            mock_psycopg2_connect.assert_called_once_with(**db_config)
+            self.assertIsNone(conn)
+            self.assertTrue("Error connecting to PostgreSQL: Connection failed" in err)
 
-    assert df.empty
-    mock_st.error.assert_called_once_with("Error fetching data from PostgreSQL: Query failed")
+    def test_get_schemas_success(self):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = [('public',), ('information_schema',), ('custom_schema',)]
 
-# --- Elasticsearch Tests ---
-@patch('src.database.Elasticsearch')
-@patch('src.database.st') # Mock Streamlit
-def test_connect_elasticsearch_hosts_success(mock_st, mock_es_constructor):
-    mock_es_instance = MagicMock()
-    mock_es_instance.ping.return_value = True
-    mock_es_constructor.return_value = mock_es_instance
+        schemas, err = get_schemas_postgres(mock_conn)
 
-    es_conn = connect_elasticsearch(hosts=["http://localhost:9200"])
+        mock_conn.cursor.assert_called_once()
+        mock_cursor.execute.assert_called_once_with("SELECT schema_name FROM information_schema.schemata;")
+        mock_cursor.fetchall.assert_called_once()
+        self.assertEqual(schemas, ['public', 'information_schema', 'custom_schema'])
+        self.assertIsNone(err)
 
-    mock_es_constructor.assert_called_once_with(["http://localhost:9200"]) # Corrected: called as positional
-    assert es_conn == mock_es_instance
-    mock_st.success.assert_called_once_with("Successfully connected to Elasticsearch!")
+    def test_get_schemas_failure(self):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+        mock_cursor.execute.side_effect = psycopg2.Error("Failed to get schemas")
 
-@patch('src.database.Elasticsearch')
-@patch('src.database.st') # Mock Streamlit
-def test_connect_elasticsearch_ping_false(mock_st, mock_es_constructor):
-    mock_es_instance = MagicMock()
-    mock_es_instance.ping.return_value = False
-    mock_es_constructor.return_value = mock_es_instance
+        schemas, err = get_schemas_postgres(mock_conn)
 
-    es_conn = connect_elasticsearch(hosts=["http://localhost:9200"])
+        self.assertIsNone(schemas)
+        self.assertTrue("Error retrieving schemas: Failed to get schemas" in err)
 
-    assert es_conn is None
-    mock_st.error.assert_called_once_with("Failed to ping Elasticsearch. Check connection details.")
-
-@patch('src.database.Elasticsearch')
-@patch('src.database.st') # Mock Streamlit
-def test_connect_elasticsearch_connection_error(mock_st, mock_es_constructor):
-    # Define a custom exception that derives from ESConnectionError
-    # and has a specific __str__ representation for the test.
-    class TestMockESConnectionError(ESConnectionError):
-        def __init__(self, message="Custom Mocked ES Connection Error"):
-            # Initialize the base ESConnectionError with args that won't cause IndexErrors
-            # For ESConnectionError, just a message arg is fine.
-            super().__init__(message)
-            self._message = message # Store custom message if needed, super already stores it in args
-
-        def __str__(self):
-            return self._message
-
-    # Use an instance of this custom exception as the side effect
-    mock_es_constructor.side_effect = TestMockESConnectionError("Mocked ES Connection Error From Custom Class")
-
-    es_conn = connect_elasticsearch(hosts=["http://localhost:9200"])
-
-    assert es_conn is None
-    expected_error_msg = "Error connecting to Elasticsearch: Mocked ES Connection Error From Custom Class"
-    mock_st.error.assert_called_once_with(expected_error_msg)
+    def test_get_schemas_no_connection(self):
+        schemas, err = get_schemas_postgres(None)
+        self.assertIsNone(schemas)
+        self.assertEqual(err, "No database connection provided.")
 
 
-# test_connect_elasticsearch_no_params removed as connect_elasticsearch now requires 'hosts'.
+    def test_get_tables_success(self):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = [('table1',), ('table2',)]
+        schema_name = "public"
 
-@patch('src.database.scan') # Mock scan from src.database
-@patch('src.database.st')
-def test_fetch_elasticsearch_data_scan_success(mock_st, mock_scan_helper): # Renamed test
-    mock_es_conn = MagicMock()
-    # scan yields dicts with _source key directly
-    mock_hits_scan_output = [
-        {'_source': {'col1': 1, 'col2': 'a'}},
-        {'_source': {'col1': 2, 'col2': 'b'}}
-    ]
-    mock_scan_helper.return_value = iter(mock_hits_scan_output)
+        tables, err = get_tables_postgres(mock_conn, schema_name)
 
-    expected_df_data = [item['_source'] for item in mock_hits_scan_output]
-    expected_df = pd.DataFrame(expected_df_data)
+        mock_conn.cursor.assert_called_once()
+        mock_cursor.execute.assert_called_once_with(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = %s;",
+            (schema_name,)
+        )
+        mock_cursor.fetchall.assert_called_once()
+        self.assertEqual(tables, ['table1', 'table2'])
+        self.assertIsNone(err)
 
-    df = fetch_elasticsearch_data(mock_es_conn, "test_index") # Function under test
+    def test_get_tables_failure(self):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+        schema_name = "public"
+        mock_cursor.execute.side_effect = psycopg2.Error("Failed to get tables")
 
-    mock_scan_helper.assert_called_once_with(client=mock_es_conn, index="test_index", query={"query": {"match_all": {}}})
-    pd.testing.assert_frame_equal(df, expected_df)
-    mock_st.warning.assert_not_called()
+        tables, err = get_tables_postgres(mock_conn, schema_name)
 
-@patch('src.database.scan')
-@patch('src.database.st')
-def test_fetch_elasticsearch_data_scan_no_hits(mock_st, mock_scan_helper): # Renamed
-    mock_es_conn = MagicMock()
-    mock_scan_helper.return_value = iter([])
+        self.assertIsNone(tables)
+        self.assertTrue(f"Error retrieving tables for schema '{schema_name}': Failed to get tables" in err)
 
-    df = fetch_elasticsearch_data(mock_es_conn, "test_index")
+    def test_get_tables_no_connection(self):
+        tables, err = get_tables_postgres(None, "public")
+        self.assertIsNone(tables)
+        self.assertEqual(err, "No database connection provided.")
 
-    assert df.empty
-    mock_scan_helper.assert_called_once_with(client=mock_es_conn, index="test_index", query={"query": {"match_all": {}}})
-    mock_st.warning.assert_called_once_with("No documents found in index 'test_index' for the given query using scan.")
+    def test_get_tables_invalid_schema_name(self):
+        mock_conn = MagicMock() # Connection object is needed for the check to pass to schema name validation
+        tables, err = get_tables_postgres(mock_conn, None) # Invalid schema name
+        self.assertIsNone(tables)
+        self.assertEqual(err, "Invalid schema name provided.")
 
-@patch('src.database.scan')
-@patch('src.database.st')
-def test_fetch_elasticsearch_data_scan_error(mock_st, mock_scan_helper): # Renamed
-    mock_es_conn = MagicMock()
-    mock_scan_helper.side_effect = Exception("Scan process failed")
+        tables, err = get_tables_postgres(mock_conn, "") # Invalid schema name
+        self.assertIsNone(tables)
+        self.assertEqual(err, "Invalid schema name provided.")
 
-    df = fetch_elasticsearch_data(mock_es_conn, "test_index")
 
-    assert df.empty
-    mock_scan_helper.assert_called_once_with(client=mock_es_conn, index="test_index", query={"query": {"match_all": {}}})
-    mock_st.error.assert_called_once_with("Error fetching data from Elasticsearch index 'test_index' using scan: Scan process failed")
+    def test_fetch_data_success(self):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+        mock_cursor.description = [('col1', None), ('col2', None)]
+        mock_cursor.fetchall.return_value = [(1, 'data1'), (2, 'data2')]
+        schema_name = "public"
+        table_name = "test_table"
 
-def test_fetch_elasticsearch_data_no_connection():
-    df = fetch_elasticsearch_data(None, "test_index")
-    assert df.empty
+        df, err = fetch_data_postgres(mock_conn, schema_name, table_name)
+
+        mock_conn.cursor.assert_called_once()
+        expected_query = f'SELECT * FROM "{schema_name}"."{table_name}";'
+        mock_cursor.execute.assert_called_once_with(expected_query)
+        mock_cursor.fetchall.assert_called_once()
+        self.assertIsInstance(df, pd.DataFrame)
+        self.assertEqual(len(df), 2)
+        self.assertEqual(list(df.columns), ['col1', 'col2'])
+        pd.testing.assert_frame_equal(df, pd.DataFrame([(1, 'data1'), (2, 'data2')], columns=['col1', 'col2']))
+        self.assertIsNone(err)
+
+    def test_fetch_data_with_limit(self):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+        mock_cursor.description = [('col1', None)]
+        mock_cursor.fetchall.return_value = [(1,)]
+        schema_name = "public"
+        table_name = "test_table"
+        limit = 100
+
+        df, err = fetch_data_postgres(mock_conn, schema_name, table_name, limit=limit)
+
+        expected_query = f'SELECT * FROM "{schema_name}"."{table_name}" LIMIT {limit};'
+        mock_cursor.execute.assert_called_once_with(expected_query)
+        self.assertIsInstance(df, pd.DataFrame)
+        self.assertIsNone(err)
+
+    def test_fetch_data_failure(self):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+        schema_name = "public"
+        table_name = "test_table"
+        mock_cursor.execute.side_effect = psycopg2.Error("Fetch failed")
+
+        df, err = fetch_data_postgres(mock_conn, schema_name, table_name)
+
+        self.assertIsNone(df)
+        self.assertTrue(f"Error fetching data from table '{schema_name}.{table_name}': Fetch failed" in err)
+
+    def test_fetch_data_no_data(self):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+        mock_cursor.description = [('col1', None), ('col2', None)] # Column names are still returned
+        mock_cursor.fetchall.return_value = [] # No data rows
+        schema_name = "public"
+        table_name = "test_table"
+
+        df, err = fetch_data_postgres(mock_conn, schema_name, table_name)
+
+        self.assertIsInstance(df, pd.DataFrame)
+        self.assertTrue(df.empty)
+        self.assertEqual(list(df.columns), ['col1', 'col2'])
+        self.assertIsNone(err)
+
+    def test_fetch_data_no_connection(self):
+        df, err = fetch_data_postgres(None, "public", "test_table")
+        self.assertIsNone(df)
+        self.assertEqual(err, "No database connection provided.")
+
+    def test_fetch_data_invalid_schema_or_table_name(self):
+        mock_conn = MagicMock()
+        df, err = fetch_data_postgres(mock_conn, None, "test_table")
+        self.assertIsNone(df)
+        self.assertEqual(err, "Invalid schema name provided.")
+
+        df, err = fetch_data_postgres(mock_conn, "public", "")
+        self.assertIsNone(df)
+        self.assertEqual(err, "Invalid table name provided.")
+
+    def test_fetch_data_invalid_limit(self):
+        mock_conn = MagicMock()
+        df, err = fetch_data_postgres(mock_conn, "public", "test_table", limit="invalid")
+        self.assertIsNone(df)
+        self.assertEqual(err, "Invalid limit provided. Limit must be a non-negative integer.")
+
+        df, err = fetch_data_postgres(mock_conn, "public", "test_table", limit=-1)
+        self.assertIsNone(df)
+        self.assertEqual(err, "Invalid limit provided. Limit must be a non-negative integer.")
+
+if __name__ == '__main__':
+    unittest.main()

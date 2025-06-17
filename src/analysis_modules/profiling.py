@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 from statsmodels.tsa.stattools import adfuller
 
+@st.cache_data
 def get_series_summary_stats(series: pd.Series):
     """Calculates basic descriptive statistics for a time series."""
     if not isinstance(series, pd.Series):
@@ -16,6 +17,7 @@ def get_series_summary_stats(series: pd.Series):
     summary = summary[[col for col in cols_order if col in summary.columns]]
     return summary
 
+@st.cache_data
 def get_missing_values_summary(series: pd.Series):
     """Calculates and summarizes missing values in a time series."""
     if not isinstance(series, pd.Series):
@@ -30,6 +32,7 @@ def get_missing_values_summary(series: pd.Series):
     })
     return summary_df
 
+@st.cache_data
 def perform_stationarity_test(series: pd.Series, significance_level=0.05):
     """
     Performs the Augmented Dickey-Fuller test for stationarity.

@@ -3,6 +3,7 @@ import numpy as np
 from sklearn.cluster import KMeans, DBSCAN
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import silhouette_score
+import streamlit as st
 # For k-need, if we want to use it for Elbow or DBSCAN eps automatically
 # from kneed import KneeLocator # Requires 'kneed' package
 # For now, will implement manual elbow/silhouette plotting guidance
@@ -22,7 +23,7 @@ def scale_features(feature_df: pd.DataFrame):
         # This shouldn't happen if feature_df is validated (e.g. no NaNs, numeric)
         return feature_df, None
 
-
+@st.cache_data
 def perform_kmeans_clustering(feature_df: pd.DataFrame, n_clusters, random_state=42, scale_data=True, **kwargs):
     """
     Performs K-Means clustering on the feature DataFrame.
@@ -64,6 +65,7 @@ def perform_kmeans_clustering(feature_df: pd.DataFrame, n_clusters, random_state
     except Exception as e:
         return None, None, f"K-Means clustering failed: {e}"
 
+@st.cache_data
 def get_kmeans_elbow_silhouette_data(feature_df: pd.DataFrame, k_range=range(2, 11), scale_data=True, random_state=42):
     """
     Calculates inertia (WCSS) and silhouette scores for a range of K values for K-Means.
@@ -113,7 +115,7 @@ def get_kmeans_elbow_silhouette_data(feature_df: pd.DataFrame, k_range=range(2, 
     except Exception as e:
         return None, f"Error calculating K-Means stats: {e}"
 
-
+@st.cache_data
 def perform_dbscan_clustering(feature_df: pd.DataFrame, eps=0.5, min_samples=5, scale_data=True, **kwargs):
     """
     Performs DBSCAN clustering on the feature DataFrame.

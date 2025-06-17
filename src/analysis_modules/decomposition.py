@@ -3,6 +3,7 @@ import streamlit as st
 from statsmodels.tsa.seasonal import seasonal_decompose
 import matplotlib.pyplot as plt # For plotting if not using st.pyplot directly with returned figure
 
+@st.cache_data
 def decompose_time_series(series: pd.Series, model='additive', period=None):
     """
     Performs time series decomposition into trend, seasonal, and residual components.

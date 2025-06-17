@@ -6,6 +6,7 @@ from sklearn.svm import OneClassSVM
 from sklearn.preprocessing import StandardScaler # Good practice for One-Class SVM
 
 
+@st.cache_data
 def detect_anomalies_zscore(series: pd.Series, threshold=3, window=None):
     """
     Detects anomalies in a time series using the Z-score method.
@@ -65,6 +66,7 @@ def detect_anomalies_zscore(series: pd.Series, threshold=3, window=None):
         return None, None, f"Z-score anomaly detection failed: {e}"
 
 
+@st.cache_data
 def detect_anomalies_iqr(series: pd.Series, multiplier=1.5):
     """
     Detects anomalies in a time series using the Interquartile Range (IQR) method.
@@ -111,6 +113,7 @@ def detect_anomalies_iqr(series: pd.Series, multiplier=1.5):
 
 # --- New ML-based Anomaly Detection Functions ---
 
+@st.cache_data
 def detect_anomalies_isolation_forest(feature_df: pd.DataFrame, contamination='auto', random_state=42, **kwargs):
     """
     Detects anomalies in a DataFrame of device features using Isolation Forest.
@@ -146,6 +149,7 @@ def detect_anomalies_isolation_forest(feature_df: pd.DataFrame, contamination='a
     except Exception as e:
         return None, None, f"Isolation Forest anomaly detection failed: {e}"
 
+@st.cache_data
 def detect_anomalies_one_class_svm(feature_df: pd.DataFrame, nu=0.05, kernel="rbf", gamma='scale', **kwargs):
     """
     Detects anomalies in a DataFrame of device features using One-Class SVM.
