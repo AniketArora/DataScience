@@ -187,6 +187,217 @@ def detect_anomalies_one_class_svm(feature_df: pd.DataFrame, nu=0.05, kernel="rb
     except Exception as e:
         return None, None, f"One-Class SVM anomaly detection failed: {e}"
 
+# --- Analysis Module Interface Implementation ---
+from src.interfaces import AnalysisModuleInterface
+from typing import Any, Dict, Tuple, Optional # For type hinting
+import matplotlib.pyplot as plt
+
+
+class AnomalyDetectionAnalysisModule(AnalysisModuleInterface):
+    """
+    Analysis module for detecting anomalous devices from a population
+    based on their engineered feature fingerprints.
+    """
+
+    def get_name(self) -> str:
+        return "Population Anomaly Detection"
+
+    def get_description(self) -> str:
+        return "Detects anomalous devices from a population based on their engineered feature fingerprints using unsupervised learning algorithms."
+
+    def get_parameter_definitions(self) -> Dict[str, Dict[str, Any]]:
+        return {
+            "selected_method": {
+                "type": "selectbox",
+                "options": ["Isolation Forest", "One-Class SVM"],
+                "default": "Isolation Forest",
+                "label": "Anomaly Detection Method",
+                "help": "Choose the algorithm for detecting population-level anomalies."
+            },
+            # Isolation Forest specific
+            "iforest_contamination": {
+                "type": "slider",
+                "default": 0.1,
+                "min_value": 0.001, # Contamination cannot be 0
+                "max_value": 0.5,
+                "step": 0.01,
+                "label": "Contamination (Isolation Forest)",
+                "help": "The expected proportion of outliers in the data set. Adjust based on domain knowledge."
+            },
+            # One-Class SVM specific
+            "ocsvm_nu": {
+                "type": "slider",
+                "default": 0.05,
+                "min_value": 0.001, # Nu should be > 0
+                "max_value": 0.5, # And typically <= 0.5
+                "step": 0.01,
+                "label": "Nu (One-Class SVM)",
+                "help": "An upper bound on the fraction of training errors and a lower bound of the fraction of support vectors."
+            },
+            "ocsvm_kernel": {
+                "type": "selectbox",
+                "options": ["rbf", "linear", "poly", "sigmoid"],
+                "default": "rbf",
+                "label": "Kernel (One-Class SVM)",
+                "help": "Specifies the kernel type to be used in the algorithm."
+            },
+            "ocsvm_gamma": {
+                "type": "text_input", # Using text_input to allow 'scale', 'auto' or float
+                "default": "scale",
+                "label": "Gamma (One-Class SVM)",
+                "help": "Kernel coefficient for 'rbf', 'poly' and 'sigmoid'. Use 'scale', 'auto', or a specific float value."
+            }
+        }
+
+    def render_parameters_ui(self, st_object: Any, current_values: Dict[str, Any], module_key: str) -> Dict[str, Any]:
+        updated_values = {}
+        param_defs = self.get_parameter_definitions()
+
+        updated_values["selected_method"] = st_object.selectbox(
+            param_defs["selected_method"]["label"],
+            options=param_defs["selected_method"]["options"],
+            index=param_defs["selected_method"]["options"].index(current_values.get("selected_method", param_defs["selected_method"]["default"])),
+            help=param_defs["selected_method"]["help"],
+            key=f"{module_key}_selected_method"
+        )
+
+        st_object.markdown("---")
+
+        if updated_values["selected_method"] == "Isolation Forest":
+            st_object.subheader("Isolation Forest Parameters")
+            updated_values["iforest_contamination"] = st_object.slider(
+                param_defs["iforest_contamination"]["label"],
+                min_value=param_defs["iforest_contamination"]["min_value"],
+                max_value=param_defs["iforest_contamination"]["max_value"],
+                value=current_values.get("iforest_contamination", param_defs["iforest_contamination"]["default"]),
+                step=param_defs["iforest_contamination"]["step"],
+                help=param_defs["iforest_contamination"]["help"],
+                key=f"{module_key}_iforest_contamination"
+            )
+        elif updated_values["selected_method"] == "One-Class SVM":
+            st_object.subheader("One-Class SVM Parameters")
+            updated_values["ocsvm_nu"] = st_object.slider(
+                param_defs["ocsvm_nu"]["label"],
+                min_value=param_defs["ocsvm_nu"]["min_value"],
+                max_value=param_defs["ocsvm_nu"]["max_value"],
+                value=current_values.get("ocsvm_nu", param_defs["ocsvm_nu"]["default"]),
+                step=param_defs["ocsvm_nu"]["step"],
+                help=param_defs["ocsvm_nu"]["help"],
+                key=f"{module_key}_ocsvm_nu"
+            )
+            updated_values["ocsvm_kernel"] = st_object.selectbox(
+                param_defs["ocsvm_kernel"]["label"],
+                options=param_defs["ocsvm_kernel"]["options"],
+                index=param_defs["ocsvm_kernel"]["options"].index(current_values.get("ocsvm_kernel", param_defs["ocsvm_kernel"]["default"])),
+                help=param_defs["ocsvm_kernel"]["help"],
+                key=f"{module_key}_ocsvm_kernel"
+            )
+            updated_values["ocsvm_gamma"] = st_object.text_input(
+                param_defs["ocsvm_gamma"]["label"],
+                value=str(current_values.get("ocsvm_gamma", param_defs["ocsvm_gamma"]["default"])), # Ensure value is str for text_input
+                help=param_defs["ocsvm_gamma"]["help"],
+                key=f"{module_key}_ocsvm_gamma"
+            )
+
+        # Ensure all params are in updated_values, even if not currently displayed
+        for param_name, definition in param_defs.items():
+            if param_name not in updated_values:
+                updated_values[param_name] = current_values.get(param_name, definition["default"])
+
+        # The run button is handled by main.py which calls run_analysis.
+        # This UI rendering function only returns the selected parameters.
+        # If a button were here, its state would be part of updated_values or handled via session_state by main.py
+        # For example: if st_object.button("Run Anomaly Detection", key=f"{module_key}_run_button"):
+        #    updated_values["action"] = "run_anomaly_detection"
+
+        return updated_values
+
+    def run_analysis(self, data_df: pd.DataFrame, params: Dict[str, Any], session_state: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        if data_df.empty:
+            return None, "Input data (features_df_cleaned) is empty."
+        if not all(dtype.kind in 'biufc' for dtype in data_df.dtypes): # Check if all columns are numeric
+             return None, "All columns in input data must be numeric for these anomaly detection methods."
+        if data_df.isnull().values.any(): # Check for any NaNs
+             return None, "Input data contains NaN values. Please ensure data is cleaned (e.g., features_df_cleaned.dropna())."
+
+
+        method = params.get("selected_method", "Isolation Forest")
+        results_payload: Dict[str, Any] = {"method": method, "status": "pending"}
+        error_msg: Optional[str] = None
+        labels: Optional[pd.Series] = None
+        scores: Optional[pd.Series] = None
+
+        try:
+            if method == "Isolation Forest":
+                contamination = params.get("iforest_contamination", 0.1)
+                labels, scores, error_msg = detect_anomalies_isolation_forest(data_df, contamination=contamination)
+            elif method == "One-Class SVM":
+                nu = params.get("ocsvm_nu", 0.05)
+                kernel = params.get("ocsvm_kernel", "rbf")
+                gamma_str = str(params.get("ocsvm_gamma", "scale"))
+                try: # Attempt to convert gamma to float if it's a number, else keep as string ('scale', 'auto')
+                    gamma_val = float(gamma_str)
+                except ValueError:
+                    gamma_val = gamma_str
+
+                labels, scores, error_msg = detect_anomalies_one_class_svm(data_df, nu=nu, kernel=kernel, gamma=gamma_val)
+            else:
+                error_msg = f"Unknown anomaly detection method: {method}"
+
+            if error_msg:
+                return None, error_msg
+
+            if labels is not None and scores is not None:
+                 results_payload.update({"labels": labels, "scores": scores, "status": "detection_done"})
+                 return results_payload, None
+            else: # Should be caught by error_msg from detection functions, but as a safeguard
+                return None, f"Anomaly detection for {method} failed to return labels or scores."
+
+        except Exception as e:
+            return None, f"An unexpected error occurred during {method} analysis: {e}"
+
+
+    def render_results(self, st_object: Any, results: Optional[Dict[str, Any]], session_state: Dict[str, Any]) -> None:
+        if results is None or results.get("status") != "detection_done":
+            st_object.info("Anomaly detection not yet run or no results to display.")
+            return
+
+        method = results.get("method", "N/A")
+        labels: Optional[pd.Series] = results.get("labels")
+        scores: Optional[pd.Series] = results.get("scores")
+
+        st_object.subheader(f"Results: {method}")
+
+        if labels is not None and scores is not None:
+            num_anomalies = (labels == -1).sum()
+            st_object.write(f"Found **{num_anomalies}** potential anomalies out of {len(labels)} devices.")
+
+            res_df = pd.DataFrame({'label': labels, 'score': scores}).sort_values(by='score')
+            st_object.write("Top potentially anomalous devices (lower scores are more anomalous):")
+            st_object.dataframe(res_df[res_df['label'] == -1].head())
+
+            st_object.write("Top potentially normal devices (higher scores are less anomalous):")
+            st_object.dataframe(res_df[res_df['label'] == 1].sort_values(by='score', ascending=False).head())
+
+
+            # Optional: Bar chart of scores
+            try:
+                fig, ax = plt.subplots(figsize=(10, 4))
+                # Plot a sample of scores if too many, e.g., 1000 max
+                scores_to_plot = scores.sort_values()
+                if len(scores_to_plot) > 1000:
+                    scores_to_plot = scores_to_plot.iloc[np.linspace(0, len(scores_to_plot)-1, 1000, dtype=int)] # Sample
+
+                scores_to_plot.plot(kind='bar', ax=ax)
+                ax.set_xticks([]) # Hide device ID ticks for clarity if too many
+                ax.set_ylabel("Anomaly Score")
+                ax.set_title(f"Anomaly Scores ({method}) - Lower is more anomalous")
+                st_object.pyplot(fig)
+            except Exception as e:
+                st_object.warning(f"Could not generate scores plot: {e}")
+        else:
+            st_object.info("No labels or scores found in results.")
+
 
 if __name__ == '__main__':
     # Example Usage for existing functions
