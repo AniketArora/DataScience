@@ -1,6 +1,9 @@
 import psycopg2
 import pandas as pd
 import streamlit as st
+import logging
+
+logger = logging.getLogger(__name__)
 
 @st.cache_resource(max_entries=5)
 def connect_postgres(db_config: dict) -> tuple[psycopg2.extensions.connection | None, str | None]:
@@ -18,6 +21,7 @@ def connect_postgres(db_config: dict) -> tuple[psycopg2.extensions.connection | 
         conn = psycopg2.connect(**db_config)
         return conn, None
     except psycopg2.Error as e:
+        logger.error("Error connecting to PostgreSQL: %s", e, exc_info=True)
         return None, f"Error connecting to PostgreSQL: {e}"
 
 @st.cache_data(max_entries=10)
@@ -40,6 +44,7 @@ def get_schemas_postgres(conn: psycopg2.extensions.connection) -> tuple[list[str
             schemas = [row[0] for row in cur.fetchall()]
         return schemas, None
     except psycopg2.Error as e:
+        logger.error("Error retrieving schemas: %s", e, exc_info=True)
         return None, f"Error retrieving schemas: {e}"
 
 @st.cache_data(max_entries=10)
@@ -68,6 +73,7 @@ def get_tables_postgres(conn: psycopg2.extensions.connection, schema_name: str) 
             tables = [row[0] for row in cur.fetchall()]
         return tables, None
     except psycopg2.Error as e:
+        logger.error("Error retrieving tables for schema '%s': %s", schema_name, e, exc_info=True)
         return None, f"Error retrieving tables for schema '{schema_name}': {e}"
 
 @st.cache_data(max_entries=10)
@@ -108,4 +114,5 @@ def fetch_data_postgres(
             df = pd.DataFrame(data, columns=colnames)
         return df, None
     except psycopg2.Error as e:
+        logger.error("Error fetching data from table '%s.%s': %s", schema_name, table_name, e, exc_info=True)
         return None, f"Error fetching data from table '{schema_name}.{table_name}': {e}"

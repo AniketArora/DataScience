@@ -3,6 +3,17 @@ import pandas as pd
 import numpy as np # For NaNs if needed in session state init
 import json # For future save/load, good to have early
 import concurrent.futures
+import logging
+
+# --- Basic Logging Configuration ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
+logger.info("Universal Data Analyzer application started.")
+
 
 # --- Utility / Helper Functions (e.g., config_utils if not separate) ---
 
@@ -69,6 +80,8 @@ if 'feature_computation_future' not in st.session_state:
     st.session_state.feature_computation_future = None
 if 'feature_computation_running' not in st.session_state:
     st.session_state.feature_computation_running = False
+if 'feature_generation_errors' not in st.session_state: # Initialize new state for errors
+    st.session_state.feature_generation_errors = []
 
 # --- Imports for modules (will be used later but good to have grouped) ---
 import matplotlib.pyplot as plt
@@ -146,6 +159,12 @@ if 'dbscan_min_samples_general' not in st.session_state: st.session_state.dbscan
 # For Surrogate Tree
 if 'surrogate_tree_depth_general' not in st.session_state: st.session_state.surrogate_tree_depth_general = 4
 
+# Feature Engineering Defaults
+if 'fe_acf_lags_general' not in st.session_state:
+    st.session_state.fe_acf_lags_general = [1, 5, 10]
+if 'fe_rolling_windows_general' not in st.session_state:
+    st.session_state.fe_rolling_windows_general = [1, 5, 10, 20]
+
 
 # === GENERAL ANALYSIS MODE ===
 if app_mode == "General Analysis":
@@ -170,6 +189,7 @@ if app_mode == "General Analysis":
     st.session_state.db_password = st.sidebar.text_input("Password", type="password", value=st.session_state.db_password, key="pg_password_input")
 
     if st.sidebar.button("Connect to PostgreSQL", key="pg_connect_button"):
+        logger.info("Attempting to connect to PostgreSQL...")
         db_config = {
             "host": st.session_state.db_host,
             "port": st.session_state.db_port,
@@ -180,6 +200,7 @@ if app_mode == "General Analysis":
         conn, err_msg = connect_postgres(db_config)
         if err_msg:
             st.sidebar.error(f"Connection Failed: {err_msg}")
+            logger.error("PostgreSQL connection failed: %s", err_msg) # exc_info=True is better in connect_postgres itself
             st.session_state.db_conn = None
             st.session_state.available_schemas = [] # Clear schemas on failed connection
             st.session_state.available_tables = []  # Clear tables on failed connection
@@ -188,10 +209,12 @@ if app_mode == "General Analysis":
         else:
             st.session_state.db_conn = conn
             st.sidebar.success("Successfully connected to PostgreSQL!")
+            logger.info("PostgreSQL connection successful.")
             # Fetch schemas immediately after successful connection
             schemas, err_schemas = get_schemas_postgres(st.session_state.db_conn)
             if err_schemas:
                 st.sidebar.error(f"Error fetching schemas: {err_schemas}")
+                # Error already logged in get_schemas_postgres
                 st.session_state.available_schemas = []
             else:
                 st.session_state.available_schemas = ["None"] + (schemas if schemas else [])
@@ -256,7 +279,7 @@ if app_mode == "General Analysis":
             if st.sidebar.button("Fetch Data from Table", key="pg_fetch_data_button"):
                 limit_val_pg = 20000 # Default limit, can be made configurable
                 # limit_val_pg = st.sidebar.number_input("Max rows to fetch", min_value=100, value=20000, step=100, key="pg_fetch_limit")
-
+                logger.info("Fetching data from %s.%s with limit %s", st.session_state.selected_schema, st.session_state.selected_table, limit_val_pg)
                 df, err_fetch = fetch_data_postgres(
                     st.session_state.db_conn,
                     st.session_state.selected_schema,
@@ -265,14 +288,14 @@ if app_mode == "General Analysis":
                 )
                 if err_fetch:
                     st.sidebar.error(f"Error fetching data: {err_fetch}")
+                    logger.error("Failed to fetch data for %s.%s: %s", st.session_state.selected_schema, st.session_state.selected_table, err_fetch)
                     # Optionally clear data if fetch fails
-                    # st.session_state.data_df_original = pd.DataFrame()
-                    # st.session_state.data_df = pd.DataFrame()
                 else:
                     st.session_state.data_df_original = df
                     reset_all_dependent_states(clear_data_too=False) # Reset downstream, keep new data
                     st.session_state.data_df = st.session_state.data_df_original.copy()
                     st.sidebar.success(f"Fetched data from '{st.session_state.selected_schema}.{st.session_state.selected_table}'. Shape: {df.shape}")
+                    logger.info("Successfully fetched data. Shape: %s", df.shape)
         else:
             st.sidebar.info("Select a schema and table to enable data fetching.")
 
@@ -478,6 +501,27 @@ if app_mode == "General Analysis":
             st.session_state.feature_computation_running = True     # Actual flag for background task status
             st.session_state.feature_computation_future = None      # Reset future object
 
+        # Parse and validate ACF Lags from UI
+        try:
+            parsed_acf_lags = [int(x.strip()) for x in st.session_state.widget_fe_acf_lags.split(',') if x.strip()]
+            if not parsed_acf_lags: parsed_acf_lags = [1, 5, 10] # Default if empty
+            st.session_state.fe_acf_lags_general = parsed_acf_lags
+        except ValueError:
+            st.sidebar.error("Invalid ACF Lags format. Using last valid or default.")
+            # Proceed with st.session_state.fe_acf_lags_general which holds last valid or default
+
+        # Parse and validate Rolling Windows from UI
+        try:
+            parsed_rolling_windows = [int(x.strip()) for x in st.session_state.widget_fe_rolling_windows.split(',') if x.strip()]
+            if not parsed_rolling_windows: parsed_rolling_windows = [1, 5, 10, 20] # Default if empty
+            # Further validation for positive integers, etc., could be added here
+            if any(w <= 0 for w in parsed_rolling_windows):
+                st.sidebar.error("Rolling windows must be positive integers. Using last valid or default.")
+            else:
+                st.session_state.fe_rolling_windows_general = parsed_rolling_windows
+        except ValueError:
+            st.sidebar.error("Invalid Rolling Windows format. Using last valid or default.")
+
             # Reset downstream results that depend on all_device_features_df
             st.session_state.all_device_features_df = pd.DataFrame()
             st.session_state.population_anomaly_results = {}
@@ -489,33 +533,54 @@ if app_mode == "General Analysis":
             # Prepare data for the executor
             data_df_original_serializable = st.session_state.data_df_original.copy()
             ts_specs_serializable = st.session_state.time_series_specs.copy()
+        # Add parsed ACF lags and Rolling Windows to ts_specs_serializable
+        ts_specs_serializable['acf_lags'] = st.session_state.fe_acf_lags_general
+        ts_specs_serializable['rolling_windows'] = st.session_state.fe_rolling_windows_general
+
             event_df_serializable = st.session_state.event_df.copy()
             global_top_event_types_cleaned_serializable = list(st.session_state.get("global_top_event_types_cleaned", []))
 
             try:
-                # Using max_workers=1 to avoid overwhelming resources or ProcessPoolExecutor issues on some platforms
                 executor = concurrent.futures.ProcessPoolExecutor(max_workers=1)
                 st.session_state.feature_computation_future = executor.submit(
                     run_feature_engineering_for_all_devices,
                     data_df_original_serializable,
-                    ts_specs_serializable,
+                ts_specs_serializable, # This now contains acf_lags and rolling_windows
                     event_df_serializable,
                     global_top_event_types_cleaned_serializable
                 )
-                executor.shutdown(wait=False) # Shutdown without waiting for tasks to complete here
+            executor.shutdown(wait=False)
                 st.sidebar.info("Feature computation started in the background.")
+            logger.info("Background feature computation task submitted with ACF Lags: %s, Rolling Windows: %s",
+                        st.session_state.fe_acf_lags_general, st.session_state.fe_rolling_windows_general)
             except Exception as e:
                 st.sidebar.error(f"Failed to start feature computation: {e}")
+                logger.error("Failed to start feature computation task: %s", e, exc_info=True)
                 st.session_state.feature_computation_running = False
-                st.session_state.running_all_features_computation = False # Reset UI flag too
+            st.session_state.running_all_features_computation = False
 
-            st.experimental_rerun() # Rerun to update UI
+        st.experimental_rerun()
+
+    # --- Feature Engineering Config UI (moved slightly above Save/Load for better flow) ---
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Feature Engineering Settings")
+    st.session_state.widget_fe_acf_lags = st.sidebar.text_input(
+        "ACF Lags (comma-separated integers)",
+        value=",".join(map(str, st.session_state.fe_acf_lags_general)),
+        key="acf_lags_input_widget" # Ensure this key is unique and not fe_acf_lags_general
+    )
+    st.session_state.widget_fe_rolling_windows = st.sidebar.text_input(
+        "Rolling Windows (comma-separated integers)",
+        value=",".join(map(str, st.session_state.fe_rolling_windows_general)),
+        key="rolling_windows_input_widget" # Ensure this key is unique
+    )
 
     # --- Save/Load App State ---
     st.sidebar.markdown("---")
     st.sidebar.subheader("Save/Load App State")
 
     if st.sidebar.button("Save App State", key="save_app_state_button_main_general"):
+        logger.info("Saving app state.")
         app_settings = gather_settings_for_save()
         json_settings = json.dumps(app_settings, indent=4)
         # The download button is created on the fly when save is clicked.
@@ -536,17 +601,21 @@ if app_mode == "General Analysis":
     )
     if uploaded_settings_file_main is not None:
         try:
+            logger.info("Loading app state from %s.", uploaded_settings_file_main.name)
             loaded_settings_dict = json.load(uploaded_settings_file_main)
             success, message = apply_loaded_settings_to_session_state(loaded_settings_dict)
             if success:
                 st.sidebar.success(f"Settings loaded! {message} Applying and rerunning...")
+                logger.info("App state loaded successfully.")
                 # Clear the uploader so it's ready for a new file if needed, and to prevent reprocessing on simple reruns
                 st.session_state.load_app_settings_uploader_main_general = None
                 st.experimental_rerun()
             else:
                 st.sidebar.error(message)
+                logger.warning("Failed to apply loaded settings: %s", message)
         except Exception as e:
             st.sidebar.error(f"Error parsing or applying settings file: {e}")
+            logger.error("Error parsing or applying settings file: %s", e, exc_info=True)
         # It's good practice to clear the file uploader after processing to avoid re-processing on every script run
         # However, direct assignment to the key in st.session_state for file_uploader is the way to "reset" it.
         # This is done above on success. If an error occurs, user might want to try again or upload different file.
@@ -762,39 +831,54 @@ if app_mode == "General Analysis":
         future = st.session_state.feature_computation_future
         if future.running():
             st.info("Feature computation is running in the background. Please wait... The UI remains interactive. Results will appear below once complete.")
-            # To prevent immediate re-runs and allow the future to progress, we might add a small delay or avoid auto-rerun here.
-            # However, Streamlit's nature is to rerun on interaction. The key is that `future.running()` will keep showing this.
         elif future.done():
             try:
-                result_df = future.result()
-                st.session_state.all_device_features_df = result_df
-                if not result_df.empty:
-                    st.success(f"Feature computation complete. Generated features for {len(result_df)} devices/entities.")
+                # Unpack the result tuple
+                computed_features_df, collected_errors_list = future.result()
+                st.session_state.all_device_features_df = computed_features_df
+                st.session_state.feature_generation_errors = collected_errors_list # Store errors
+
+                if computed_features_df is not None and not computed_features_df.empty:
+                    st.success(f"Feature computation complete. Generated features for {len(computed_features_df)} devices/entities.")
+                elif computed_features_df is not None and computed_features_df.empty and not collected_errors_list :
+                     st.warning("Feature computation completed but no features were generated. All devices/entities might have been skipped due to data issues or filters.")
+                elif computed_features_df is None and collected_errors_list:
+                     st.error("Feature computation resulted in errors and no features.")
+                     logger.error("Feature computation resulted in errors and no features DataFrame was returned.")
                 else:
-                    st.warning("Feature computation completed but returned no features. This might be due to data issues or filtering during the process.")
+                     st.warning("Feature computation completed. Some features were generated, but some errors also occurred.")
+                     logger.warning("Feature computation completed with some errors for individual entities.")
+
+
             except Exception as e:
-                st.session_state.all_device_features_df = pd.DataFrame() # Ensure it's empty on error
-                st.error(f"Feature computation failed: {e}")
-                # Detailed error logging can be added here for server logs
-                print(f"Background feature computation error: {e}") # Print to console for debugging
+                st.session_state.all_device_features_df = pd.DataFrame()
+                st.session_state.feature_generation_errors = [("Overall Task", f"Feature computation task failed: {e}")]
+                st.error(f"Feature computation task failed: {e}")
+                logger.error("Feature computation background task failed: %s", e, exc_info=True)
             finally:
+                logger.info("Feature computation background task processing finished (either completed or failed).")
                 st.session_state.feature_computation_running = False
                 st.session_state.feature_computation_future = None
-                st.session_state.running_all_features_computation = False # Reset UI display flag
-                st.experimental_rerun() # Rerun to show results or updated state
+                st.session_state.running_all_features_computation = False
+                st.experimental_rerun()
 
-    # This section is now primarily for displaying messages while running_all_features_computation is true
-    # OR if the computation has just been triggered and the future isn't resolved yet.
-    elif st.session_state.get("running_all_features_computation"): # Catches the state where button was clicked but future not yet checked
+    elif st.session_state.get("running_all_features_computation"):
         st.header("Device Behavior Feature Engineering (All Devices)")
         st.info("Initializing feature computation... If this message persists, check for errors in the console or sidebar.")
-        # This state should quickly transition to the above block checking the future object on the next rerun.
 
-    # Display results if available and not currently running
-    if not st.session_state.get('feature_computation_running', False) and not st.session_state.all_device_features_df.empty:
-        st.subheader("Overview of All Device Features")
-        st.dataframe(st.session_state.all_device_features_df.head())
-        st.info(f"Feature matrix shape: {st.session_state.all_device_features_df.shape}")
+    # Display results and errors if available and not currently running
+    if not st.session_state.get('feature_computation_running', False):
+        if not st.session_state.all_device_features_df.empty:
+            st.subheader("Overview of All Device Features")
+            st.dataframe(st.session_state.all_device_features_df.head())
+            st.info(f"Feature matrix shape: {st.session_state.all_device_features_df.shape}")
+
+        if st.session_state.get('feature_generation_errors'):
+            st.error("Some errors occurred during feature generation for individual devices/entities:")
+            with st.expander("View Error Details"):
+                for entity_id, error_msg in st.session_state.feature_generation_errors:
+                    st.write(f"- Device/Entity '{entity_id}': {error_msg}")
+                    logger.warning("Entity '%s' failed feature generation: %s", entity_id, error_msg)
 
         @st.cache_data # Cache the conversion to CSV
         def convert_df_to_csv(df):

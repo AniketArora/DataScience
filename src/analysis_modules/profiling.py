@@ -1,15 +1,19 @@
 import pandas as pd
 import streamlit as st
 from statsmodels.tsa.stattools import adfuller
+import logging
+
+logger = logging.getLogger(__name__)
 
 @st.cache_data
 def get_series_summary_stats(series: pd.Series):
     """Calculates basic descriptive statistics for a time series."""
     if not isinstance(series, pd.Series):
-        return pd.DataFrame() # Or raise error
+        logger.warning("get_series_summary_stats: Input is not a pandas Series.")
+        return pd.DataFrame()
 
     summary = series.describe().to_frame().T
-    summary['median'] = series.median() # describe() might not include median for Series
+    summary['median'] = series.median()
     summary['mode'] = series.mode().iloc[0] if not series.mode().empty else 'N/A' # Handle multiple modes or no mode
     # Reorder to make it a bit more standard
     cols_order = ['count', 'mean', 'std', 'min', '25%', '50%', 'median', '75%', 'max', 'mode']
@@ -21,6 +25,7 @@ def get_series_summary_stats(series: pd.Series):
 def get_missing_values_summary(series: pd.Series):
     """Calculates and summarizes missing values in a time series."""
     if not isinstance(series, pd.Series):
+        logger.warning("get_missing_values_summary: Input is not a pandas Series.")
         return pd.DataFrame()
 
     missing_count = series.isnull().sum()
@@ -39,20 +44,19 @@ def perform_stationarity_test(series: pd.Series, significance_level=0.05):
     Returns a dictionary with test results and interpretation.
     """
     if not isinstance(series, pd.Series):
-        return {
-            "error": "Input is not a pandas Series."
-        }
+        msg = "Input is not a pandas Series."
+        logger.warning("perform_stationarity_test: %s", msg)
+        return {"error": msg}
     if series.empty:
-        return {
-            "error": "Input series is empty."
-        }
+        msg = "Input series is empty."
+        logger.warning("perform_stationarity_test: %s", msg)
+        return {"error": msg}
 
-    # ADF test requires no NaN values
     series_cleaned = series.dropna()
     if series_cleaned.empty:
-        return {
-            "error": "Series is empty after dropping NaN values. Cannot perform ADF test."
-        }
+        msg = "Series is empty after dropping NaN values. Cannot perform ADF test."
+        logger.warning("perform_stationarity_test: %s", msg)
+        return {"error": msg}
 
     try:
         result = adfuller(series_cleaned)
@@ -74,6 +78,7 @@ def perform_stationarity_test(series: pd.Series, significance_level=0.05):
             "Is Stationary (at chosen alpha)": p_value <= significance_level
         }
     except Exception as e:
+        logger.error("ADF test failed for series %s: %s", series.name if series.name else "Unnamed", e, exc_info=True)
         return {
             "error": f"ADF test failed: {e}"
         }
