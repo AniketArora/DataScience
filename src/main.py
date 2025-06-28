@@ -555,6 +555,7 @@ if app_mode == "Guided Workflows":
         ts_specs_serializable['acf_lags'] = st.session_state.fe_acf_lags_general
         ts_specs_serializable['rolling_windows'] = st.session_state.fe_rolling_windows_general
 
+            # Corrected indentation for the following block
             event_df_serializable = st.session_state.event_df.copy()
             global_top_event_types_cleaned_serializable = list(st.session_state.get("global_top_event_types_cleaned", []))
 
@@ -563,14 +564,14 @@ if app_mode == "Guided Workflows":
                 st.session_state.feature_computation_future = executor.submit(
                     run_feature_engineering_for_all_devices,
                     data_df_original_serializable,
-                ts_specs_serializable, # This now contains acf_lags and rolling_windows
+                    ts_specs_serializable, # This now contains acf_lags and rolling_windows
                     event_df_serializable,
                     global_top_event_types_cleaned_serializable
                 )
-            executor.shutdown(wait=False)
+                executor.shutdown(wait=False) # Ensure this is at the correct indentation
                 st.sidebar.info("Feature computation started in the background.")
-            logger.info("Background feature computation task submitted with ACF Lags: %s, Rolling Windows: %s",
-                        st.session_state.fe_acf_lags_general, st.session_state.fe_rolling_windows_general)
+                logger.info("Background feature computation task submitted with ACF Lags: %s, Rolling Windows: %s",
+                            st.session_state.fe_acf_lags_general, st.session_state.fe_rolling_windows_general)
             except Exception as e:
                 st.sidebar.error(f"Failed to start feature computation: {e}")
                 logger.error("Failed to start feature computation task: %s", e, exc_info=True)
