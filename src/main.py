@@ -1061,9 +1061,10 @@ if app_mode == "Guided Workflows":
                             st.session_state.clustering_results = {'method':'K-Means', 'labels':labels, 'model':model, 'k':k_final}
                             st.success(f"K-Means complete (K={k_final}).")
                 elif cluster_method == "DBSCAN":
-                scale_data_dbscan_specific = st.checkbox("Scale data before DBSCAN", value=True, key="scale_data_clustering_dbscan_general")
-                    eps_dbscan = st.number_input("Epsilon", 0.01, 10.0, 0.5, 0.01, key="db_eps_general"); min_samples_dbscan = st.number_input("Min Samples", 1, 100, 5, 1, key="db_min_samples_general")
-                # Removed individual save/load placeholder
+                    scale_data_dbscan_specific = st.checkbox("Scale data before DBSCAN", value=True, key="scale_data_clustering_dbscan_general")
+                    eps_dbscan = st.number_input("Epsilon", 0.01, 10.0, 0.5, 0.01, key="db_eps_general")
+                    min_samples_dbscan = st.number_input("Min Samples", 1, 100, 5, 1, key="db_min_samples_general")
+                    # Removed individual save/load placeholder
                     if st.button("Run DBSCAN", key="run_db_pop_btn_general"):
                         labels, model, err_msg = perform_dbscan_clustering(features_df_cleaned, eps=eps_dbscan, min_samples=min_samples_dbscan, scale_data=scale_data_dbscan_specific) # Use specific scale
                         if err_msg:
@@ -1071,6 +1072,7 @@ if app_mode == "Guided Workflows":
                         else:
                             st.session_state.clustering_results = {'method':'DBSCAN', 'labels':labels, 'model':model}
                             st.success("DBSCAN complete.")
+
                 clust_results = st.session_state.get('clustering_results')
                 if clust_results and 'labels' in clust_results:
                     st.write(f"Results: {clust_results['method']}"); clust_summary = clust_results['labels'].value_counts().rename("Device Count").to_frame(); st.dataframe(clust_summary)
