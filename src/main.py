@@ -1027,19 +1027,28 @@ if app_mode == "Guided Workflows":
 
             with tab_pop_clustering:
                 st.subheader("Device Behavior Clustering")
-                if "last_clustering_df_id" not in st.session_state or id(features_df_cleaned) != st.session_state.get("last_clustering_df_id"): st.session_state.clustering_results = {}; st.session_state.kmeans_stats_df = None; st.session_state.last_clustering_df_id = id(features_df_cleaned)
-            cluster_method = st.selectbox("Method", ["K-Means", "DBSCAN"], key="pop_clust_method_general")
+                if "last_clustering_df_id" not in st.session_state or id(features_df_cleaned) != st.session_state.get("last_clustering_df_id"):
+                    st.session_state.clustering_results = {}
+                    st.session_state.kmeans_stats_df = None
+                    st.session_state.last_clustering_df_id = id(features_df_cleaned)
 
-            # Specific scaling checkboxes per method
-            scale_data_kmeans_specific = False
-            scale_data_dbscan_specific = False
+                cluster_method = st.selectbox("Method", ["K-Means", "DBSCAN"], key="pop_clust_method_general")
+
+                # Specific scaling checkboxes per method
+                scale_data_kmeans_specific = False
+                scale_data_dbscan_specific = False
 
                 if cluster_method == "K-Means":
-                scale_data_kmeans_specific = st.checkbox("Scale data before K-Means", value=True, key="scale_data_clustering_kmeans_general")
-                st.write("Determine optimal K:"); k_min = st.number_input("Min K", 2, len(features_df_cleaned)-1 if len(features_df_cleaned)>2 else 2, 2, key="k_min_kstats_general"); k_max_val = min(10, len(features_df_cleaned)-1 if len(features_df_cleaned)>2 else 2); k_max = st.number_input("Max K", k_min, len(features_df_cleaned)-1 if len(features_df_cleaned)>2 else 2, k_max_val if k_max_val >= k_min else k_min, key="k_max_kstats_general")
+                    scale_data_kmeans_specific = st.checkbox("Scale data before K-Means", value=True, key="scale_data_clustering_kmeans_general")
+                    st.write("Determine optimal K:")
+                    k_min = st.number_input("Min K", 2, len(features_df_cleaned)-1 if len(features_df_cleaned)>2 else 2, 2, key="k_min_kstats_general")
+                    k_max_val = min(10, len(features_df_cleaned)-1 if len(features_df_cleaned)>2 else 2)
+                    k_max = st.number_input("Max K", k_min, len(features_df_cleaned)-1 if len(features_df_cleaned)>2 else 2, k_max_val if k_max_val >= k_min else k_min, key="k_max_kstats_general")
                     if st.button("Calc K-Means Stats", key="calc_km_stats_btn_general"):
-                    if k_max >= k_min: k_stats_df, err_msg = get_kmeans_elbow_silhouette_data(features_df_cleaned, k_range=range(k_min, k_max+1), scale_data=scale_data_kmeans_specific); # Use specific scale
-                        if err_msg: st.error(err_msg); else: st.session_state.kmeans_stats_df = k_stats_df
+                        if k_max >= k_min:
+                            k_stats_df, err_msg = get_kmeans_elbow_silhouette_data(features_df_cleaned, k_range=range(k_min, k_max+1), scale_data=scale_data_kmeans_specific); # Use specific scale
+                            if err_msg: st.error(err_msg)
+                            else: st.session_state.kmeans_stats_df = k_stats_df
                         else: st.warning("Max K >= Min K.")
                     if st.session_state.get("kmeans_stats_df") is not None: k_stats_df_display = st.session_state.kmeans_stats_df; st.line_chart(k_stats_df_display.set_index('K')['Inertia']); st.line_chart(k_stats_df_display.set_index('K')['Silhouette Score'].dropna())
                     k_final = st.number_input("Num Clusters (K)", 2, len(features_df_cleaned)-1 if len(features_df_cleaned)>2 else 2, 3, key="km_k_final_general");
