@@ -313,14 +313,17 @@ if __name__ == '__main__':
     summary_df, error = get_cluster_feature_summary(features, mock_cluster_labels)
     if error: print(f"Error: {error}")
     else: print(summary_df)
+
     print("\n--- Feature Importance for Clusters (ANOVA) ---")
     importance_df, error = get_feature_importance_for_clusters_anova(features, mock_cluster_labels)
     if error: print(f"Error: {error}")
     else: print(importance_df)
+
     print("\n--- Anomalous vs. Normal Feature Comparison ---")
     comparison_df, error = compare_anomalous_vs_normal_features(features, mock_anomaly_labels)
     if error: print(f"Error: {error}")
     else: print(comparison_df)
+
     print("\n--- Natural Language Summaries (Examples) ---")
     if summary_df is not None and importance_df is not None:
         overall_means_for_summary = features.mean()
@@ -360,3 +363,279 @@ if __name__ == '__main__':
            event_corr_clusters_df, error_ecc = analyze_event_correlations(mock_features_with_events, mock_cluster_labels)
            if error_ecc: print(f"Error: {error_ecc}")
            else: print("\nEvent Correlation with Cluster Labels (Mean Event Counts):\n", event_corr_clusters_df)
+
+
+# --- New Significant Event Types Function ---
+from scipy.stats import chi2_contingency, fisher_exact
+
+def analyze_significant_event_types(
+    all_device_features_df_with_event_features: pd.DataFrame,
+    result_labels: pd.Series,
+    event_feature_prefix: str,
+    at_risk_label: any,
+    baseline_label: any = None
+):
+    """
+    Analyzes event types to identify those significantly associated with an at-risk group compared to a baseline group.
+
+    Args:
+        all_device_features_df_with_event_features (pd.DataFrame): DataFrame containing device features,
+                                                                  including event count columns.
+        result_labels (pd.Series): Series indicating the group label for each device (e.g., cluster ID, anomaly label).
+        event_feature_prefix (str): Prefix to identify event count columns (e.g., "evt_count_").
+        at_risk_label (any): The label value identifying the 'at-risk' group.
+        baseline_label (any, optional): The label value identifying the 'baseline' group.
+                                        If None, baseline is all devices not in the 'at-risk' group.
+
+    Returns:
+        pd.DataFrame: DataFrame with analysis results (lift, p-value, counts) for each event type,
+                      sorted by lift (descending).
+        str: Error message if an issue occurred, None otherwise.
+    """
+    if not isinstance(all_device_features_df_with_event_features, pd.DataFrame) or \
+       not isinstance(result_labels, pd.Series):
+        return None, "Inputs must be pandas DataFrame and Series."
+    if all_device_features_df_with_event_features.empty or result_labels.empty:
+        return None, "Input DataFrame or labels Series is empty."
+
+    common_index = all_device_features_df_with_event_features.index.intersection(result_labels.index)
+    if common_index.empty:
+        return None, "Feature DataFrame and result labels must have common indices."
+
+    df_aligned = all_device_features_df_with_event_features.loc[common_index]
+    labels_aligned = result_labels.loc[common_index]
+
+    event_count_cols = [col for col in df_aligned.columns if col.startswith(event_feature_prefix)]
+    if not event_count_cols:
+        return None, f"No event count features found with prefix '{event_feature_prefix}'."
+
+    at_risk_mask = (labels_aligned == at_risk_label)
+    if not at_risk_mask.any():
+        return None, f"No devices found for the at-risk label '{at_risk_label}'."
+
+    if baseline_label is not None:
+        baseline_mask = (labels_aligned == baseline_label)
+        if not baseline_mask.any():
+            return None, f"No devices found for the baseline label '{baseline_label}'."
+    else:
+        baseline_mask = ~at_risk_mask # All devices not in at-risk group
+        if not baseline_mask.any():
+            return None, "No devices found for the baseline group (all non at-risk devices)."
+
+
+    results = []
+
+    for event_col in event_count_cols:
+        event_type_name = event_col.replace(event_feature_prefix, "")
+
+        # Devices in at-risk group where event occurred (count > 0)
+        at_risk_event_occurred = df_aligned.loc[at_risk_mask, event_col] > 0
+        a = at_risk_event_occurred.sum()
+        # Total devices in at-risk group
+        n_at_risk = at_risk_mask.sum()
+        b = n_at_risk - a
+
+        # Devices in baseline group where event occurred (count > 0)
+        baseline_event_occurred = df_aligned.loc[baseline_mask, event_col] > 0
+        c = baseline_event_occurred.sum()
+        # Total devices in baseline group
+        n_baseline = baseline_mask.sum()
+        d = n_baseline - c
+
+        # Contingency table
+        #        Event Occurred | Event Did Not Occur
+        # At-Risk |      a       |        b
+        # Baseline|      c       |        d
+        contingency_table = np.array([[a, b], [c, d]])
+
+        # Calculate Lift
+        # Lift = (a / (a+b)) / (c / (c+d))
+        # (Incidence of event in at-risk group) / (Incidence of event in baseline group)
+        incidence_at_risk = a / n_at_risk if n_at_risk > 0 else 0
+        incidence_baseline = c / n_baseline if n_baseline > 0 else 0
+
+        if incidence_baseline == 0: # Avoid division by zero
+            lift = np.inf if incidence_at_risk > 0 else np.nan # Or some other indicator like -1 or a large number
+        else:
+            lift = incidence_at_risk / incidence_baseline
+
+        p_value = np.nan
+        chi2_note = ""
+        try:
+            # Check for low expected frequencies, which might make chi2 unreliable
+            expected_freq_too_low = False
+            if np.any(contingency_table < 5): # A common heuristic
+                 chi2_note = "Fisher's exact test might be more appropriate due to low counts in contingency table."
+
+            # Ensure there's enough data to run chi2 (e.g., non-zero rows/columns)
+            if contingency_table.sum() > 0 and np.all(contingency_table.sum(axis=0) > 0) and np.all(contingency_table.sum(axis=1) > 0):
+                chi2, p, dof, expected = chi2_contingency(contingency_table, correction=False) # correction=False is often recommended
+                p_value = p
+                if np.any(expected < 5) and not chi2_note: # Check expected frequencies from chi2_contingency itself
+                    chi2_note = "Fisher's exact test might be more appropriate due to low expected frequencies (<5)."
+            else:
+                chi2_note = "Skipped chi2: not enough data (e.g. all zeros in a row/column)."
+
+        except ValueError as ve: # e.g. if sum of some row/col is zero
+            p_value = np.nan # Could not calculate
+            chi2_note = f"Chi2 calculation error: {ve}"
+
+
+        results.append({
+            "event_type": event_type_name,
+            "lift": lift,
+            "p_value": p_value,
+            "at_risk_group_event_count": a, # num at-risk devices where event occurred
+            "baseline_group_event_count": c, # num baseline devices where event occurred
+            "at_risk_group_total_devices": n_at_risk,
+            "baseline_group_total_devices": n_baseline,
+            "chi2_contingency_note": chi2_note
+        })
+
+    if not results:
+        return pd.DataFrame(), "No event types processed or no results generated."
+
+    results_df = pd.DataFrame(results)
+    # Sort by lift (descending) then p-value (ascending) as a secondary sort
+    results_df = results_df.sort_values(by=['lift', 'p_value'], ascending=[False, True]).reset_index(drop=True)
+
+    return results_df, None
+
+
+if __name__ == '__main__':
+    rng = np.random.RandomState(42)
+    n_dev = 100; n_feat = 3
+    features = pd.DataFrame(rng.rand(n_dev, n_feat), columns=[f'feat_{j}' for j in range(n_feat)], index=[f'dev_{i}' for i in range(n_dev)])
+    features.iloc[0:30, 0] += 2; features.iloc[30:60, 0] -= 2; features.iloc[0:20, 1] += 1.5
+    mock_cluster_labels = pd.Series([0]*(n_dev//3) + [1]*(n_dev//3) + [2]*(n_dev - 2*(n_dev//3)), index=features.index)
+    mock_anomaly_labels = pd.Series([1]*n_dev, index=features.index)
+    anomalous_indices = features.sample(n=10, random_state=1).index
+    mock_anomaly_labels.loc[anomalous_indices] = -1
+
+    print("--- Cluster Feature Summary (Means) ---")
+    summary_df, error = get_cluster_feature_summary(features, mock_cluster_labels)
+    if error: print(f"Error: {error}")
+    else: print(summary_df)
+
+    print("\n--- Feature Importance for Clusters (ANOVA) ---")
+    importance_df, error = get_feature_importance_for_clusters_anova(features, mock_cluster_labels)
+    if error: print(f"Error: {error}")
+    else: print(importance_df)
+
+    print("\n--- Anomalous vs. Normal Feature Comparison ---")
+    comparison_df, error = compare_anomalous_vs_normal_features(features, mock_anomaly_labels)
+    if error: print(f"Error: {error}")
+    else: print(comparison_df)
+
+    print("\n--- Natural Language Summaries (Examples) ---")
+    if summary_df is not None and importance_df is not None:
+        overall_means_for_summary = features.mean()
+        print(generate_cluster_summary_text(0, (mock_cluster_labels == 0).sum(), len(features), summary_df.loc[0], overall_means_for_summary))
+    if comparison_df is not None and not anomalous_indices.empty:
+        print(generate_anomaly_summary_text(device_id=anomalous_indices[0], anomaly_score=-1.5, top_features_comparison=comparison_df))
+
+    print("\n--- Surrogate Model Anomaly Explanation ---")
+    if not features.empty:
+        features_cleaned_for_surrogate = features.dropna()
+        if not features_cleaned_for_surrogate.empty:
+            labels_for_surrogate = mock_anomaly_labels.loc[features_cleaned_for_surrogate.index]
+            if labels_for_surrogate.nunique() >=2:
+                tree_model, tree_importances, tree_report, error_tree = explain_anomalies_with_surrogate_model(
+                    features_cleaned_for_surrogate, labels_for_surrogate, max_depth=3, test_size=0.0
+                )
+                if error_tree: print(f"Error training surrogate tree: {error_tree}")
+                else:
+                    print("Surrogate Tree Feature Importances:\n", tree_importances.head())
+                    if tree_report: print("Surrogate Tree Report:\n", pd.DataFrame(tree_report).transpose())
+                    print("Surrogate tree model trained.")
+            else: print("Skipping surrogate: Not enough distinct classes after cleaning.")
+        else: print("Skipping surrogate: Features empty after NaN drop.")
+    else: print("Skipping surrogate: 'features' not available.")
+
+    print("\n--- Event Correlation Analysis ---")
+    if 'features' in locals() and 'mock_anomaly_labels' in locals():
+        mock_features_with_events = features.copy()
+        mock_features_with_events['evt_count_Error_X'] = rng.randint(0, 5, size=len(features))
+        mock_features_with_events['evt_count_Warning_Y'] = rng.randint(0, 10, size=len(features))
+        mock_features_with_events['evt_count_Info_Z'] = rng.randint(0, 2, size=len(features)) # Low count event
+        anomalous_idx_for_event_test = mock_anomaly_labels[mock_anomaly_labels == -1].index
+        normal_idx_for_event_test = mock_anomaly_labels[mock_anomaly_labels == 1].index
+
+        # Make Error_X more prevalent in anomalous
+        mock_features_with_events.loc[anomalous_idx_for_event_test, 'evt_count_Error_X'] = rng.randint(1, 5, size=len(anomalous_idx_for_event_test))
+        mock_features_with_events.loc[normal_idx_for_event_test, 'evt_count_Error_X'] = rng.randint(0, 2, size=len(normal_idx_for_event_test))
+        # Make Info_Z more prevalent in normal (baseline)
+        mock_features_with_events.loc[normal_idx_for_event_test, 'evt_count_Info_Z'] = 1
+
+
+        event_corr_df, error_ec = analyze_event_correlations(mock_features_with_events, mock_anomaly_labels)
+        if error_ec: print(f"Error: {error_ec}")
+        else: print("Event Correlation with Anomaly Labels (Mean Event Counts):\n", event_corr_df)
+
+        if 'mock_cluster_labels' in locals():
+           event_corr_clusters_df, error_ecc = analyze_event_correlations(mock_features_with_events, mock_cluster_labels)
+           if error_ecc: print(f"Error: {error_ecc}")
+           else: print("\nEvent Correlation with Cluster Labels (Mean Event Counts):\n", event_corr_clusters_df)
+
+    print("\n--- Significant Event Type Analysis (Lift & Chi2) ---")
+    if 'mock_features_with_events' in locals() and 'mock_anomaly_labels' in locals():
+        # Test case 1: Anomalous (-1) vs Baseline (all others, which is 1 in this case)
+        sig_events_df, error_sig = analyze_significant_event_types(
+            mock_features_with_events,
+            mock_anomaly_labels,
+            event_feature_prefix="evt_count_",
+            at_risk_label=-1
+        )
+        if error_sig:
+            print(f"Error in significant event analysis (anomalous vs all others): {error_sig}")
+        else:
+            print("Significant Events (Anomalous [-1] vs. Rest [1]):\n", sig_events_df)
+
+        # Test case 2: Anomalous (-1) vs specific Baseline (1)
+        # This should yield similar results to above if only -1 and 1 are present.
+        sig_events_df_specific_baseline, error_sig_sb = analyze_significant_event_types(
+            mock_features_with_events,
+            mock_anomaly_labels, # Using anomaly labels that have -1 and 1
+            event_feature_prefix="evt_count_",
+            at_risk_label=-1,
+            baseline_label=1
+        )
+        if error_sig_sb:
+            print(f"Error in significant event analysis (anomalous vs specific baseline): {error_sig_sb}")
+        else:
+            print("\nSignificant Events (Anomalous [-1] vs. Baseline [1]):\n", sig_events_df_specific_baseline)
+
+        # Test case 3: Using cluster labels (e.g. cluster 0 vs cluster 1)
+        if 'mock_cluster_labels' in locals() and mock_cluster_labels.nunique() > 1:
+            # Make one event type more prevalent in cluster 0
+            cluster_0_indices = mock_cluster_labels[mock_cluster_labels == 0].index
+            mock_features_with_events.loc[cluster_0_indices, 'evt_count_Warning_Y'] += 5
+
+            sig_events_clusters_df, error_sig_c = analyze_significant_event_types(
+                mock_features_with_events,
+                mock_cluster_labels,
+                event_feature_prefix="evt_count_",
+                at_risk_label=0, # Cluster 0 as at-risk
+                baseline_label=1  # Cluster 1 as baseline
+            )
+            if error_sig_c:
+                print(f"Error in significant event analysis (cluster 0 vs cluster 1): {error_sig_c}")
+            else:
+                print("\nSignificant Events (Cluster 0 vs. Cluster 1):\n", sig_events_clusters_df)
+
+            # Test case 4: Cluster 0 vs all other clusters
+            sig_events_clusters_df_vs_rest, error_sig_c_rest = analyze_significant_event_types(
+                mock_features_with_events,
+                mock_cluster_labels,
+                event_feature_prefix="evt_count_",
+                at_risk_label=0, # Cluster 0 as at-risk
+                baseline_label=None # All other clusters as baseline
+            )
+            if error_sig_c_rest:
+                print(f"Error in significant event analysis (cluster 0 vs rest): {error_sig_c_rest}")
+            else:
+                print("\nSignificant Events (Cluster 0 vs. Rest of Clusters):\n", sig_events_clusters_df_vs_rest)
+        else:
+            print("\nSkipping cluster-based significant event tests: not enough distinct clusters or labels not available.")
+    else:
+        print("\nSkipping significant event type analysis: mock event data not available.")

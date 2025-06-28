@@ -95,14 +95,17 @@ from src.analysis_modules.decomposition import decompose_time_series
 from src.analysis_modules.anomalies import (
     detect_anomalies_zscore,
     detect_anomalies_iqr,
-    detect_anomalies_isolation_forest,
-    detect_anomalies_one_class_svm
+    # detect_anomalies_isolation_forest, # Now part of AnomalyDetectionAnalysisModule
+    # detect_anomalies_one_class_svm, # Now part of AnomalyDetectionAnalysisModule
+    AnomalyDetectionAnalysisModule
 )
 from src.analysis_modules.feature_engineering import generate_all_features_for_series, run_feature_engineering_for_all_devices
 from src.analysis_modules.clustering import (
     perform_kmeans_clustering,
-    get_kmeans_elbow_silhouette_data,
-    perform_dbscan_clustering
+    # perform_kmeans_clustering, # Now part of ClusteringAnalysisModule
+    # get_kmeans_elbow_silhouette_data, # Now part of ClusteringAnalysisModule
+    # perform_dbscan_clustering, # Now part of ClusteringAnalysisModule
+    ClusteringAnalysisModule
 )
 from src.analysis_modules.explainability import (
     get_cluster_feature_summary,
@@ -110,8 +113,7 @@ from src.analysis_modules.explainability import (
     compare_anomalous_vs_normal_features,
     generate_cluster_summary_text,
     generate_anomaly_summary_text,
-    explain_anomalies_with_surrogate_model,
-    analyze_event_correlations
+    explain_anomalies_with_surrogate_model
 )
 from sklearn.tree import plot_tree # For visualizing surrogate tree
 from src.config_utils import (
@@ -124,7 +126,50 @@ from src.config_utils import (
 # --- Main App Title ---
 st.title("Universal Data Analyzer 📊")
 
-# === APP MODE SELECTOR (SIDEBAR) ===
+# --- Global State Initialization ---
+if 'db_conn' not in st.session_state: st.session_state.db_conn = None
+if 'data_df_original' not in st.session_state: st.session_state.data_df_original = pd.DataFrame()
+if 'data_df' not in st.session_state: st.session_state.data_df = pd.DataFrame()
+if 'event_df' not in st.session_state: st.session_state.event_df = pd.DataFrame() # New for event data
+if 'active_filters' not in st.session_state: st.session_state.active_filters = {}
+if 'time_series_specs' not in st.session_state:
+    st.session_state.time_series_specs = {"id_cols": [], "timestamp_col": "None", "value_cols": [], "selected_id": "None", "selected_value_col_for_analysis": "None", "processed_series": None}
+if 'all_device_features_df' not in st.session_state: st.session_state.all_device_features_df = pd.DataFrame()
+if 'single_series_features_display' not in st.session_state: st.session_state.single_series_features_display = None
+if 'running_all_features_computation' not in st.session_state: st.session_state.running_all_features_computation = False
+if 'population_anomaly_results' not in st.session_state: st.session_state.population_anomaly_results = {}
+if 'clustering_results' not in st.session_state: st.session_state.clustering_results = {}
+if 'kmeans_stats_df' not in st.session_state: st.session_state.kmeans_stats_df = None
+if 'last_pop_anomaly_df_id' not in st.session_state: st.session_state.last_pop_anomaly_df_id = None
+if 'last_clustering_df_id' not in st.session_state: st.session_state.last_clustering_df_id = None
+if 'res_df_anomalies_sorted' not in st.session_state: st.session_state.res_df_anomalies_sorted = pd.DataFrame()
+if 'surrogate_tree_explainer' not in st.session_state: st.session_state.surrogate_tree_explainer = None
+
+# --- Utility for resetting states ---
+def reset_ts_and_temp_cols():
+    temp_id_col_name = "_temp_unique_id_"
+    if temp_id_col_name in st.session_state.data_df_original.columns:
+        try: del st.session_state.data_df_original[temp_id_col_name]
+        except KeyError: pass
+    if temp_id_col_name in st.session_state.data_df.columns:
+         try: del st.session_state.data_df[temp_id_col_name]
+         except KeyError: pass
+    st.session_state.time_series_specs = {"id_cols": [], "timestamp_col": "None", "value_cols": [], "selected_id": "None", "selected_value_col_for_analysis": "None", "processed_series": None}
+    st.session_state.active_filters = {}
+    st.session_state.all_device_features_df = pd.DataFrame()
+    st.session_state.single_series_features_display = None
+    st.session_state.population_anomaly_results = {}
+    st.session_state.clustering_results = {}
+    st.session_state.kmeans_stats_df = None
+    st.session_state.last_pop_anomaly_df_id = None
+    st.session_state.last_clustering_df_id = None
+    st.session_state.res_df_anomalies_sorted = pd.DataFrame()
+    st.session_state.surrogate_tree_explainer = None
+    st.session_state.event_df = pd.DataFrame() # Reset event_df
+    st.session_state.global_top_event_types_cleaned = [] # Reset global event types
+
+
+# --- APP MODE SELECTION (SIDEBAR) ---
 st.sidebar.title("App Mode")
 app_mode = st.sidebar.radio(
     "Choose Mode:",
@@ -134,78 +179,51 @@ app_mode = st.sidebar.radio(
 )
 st.sidebar.markdown("---")
 
-# === SHARED SIDEBAR ELEMENTS (e.g., Data Source) ===
-# These might be common to both modes, or you might move them into "General Analysis" mode
-# For now, let's assume data loading is primarily a "General Analysis" setup task.
+# --- CONDITIONAL UI BASED ON APP MODE ---
 
-if 'db_type_general' not in st.session_state: st.session_state.db_type_general = "PostgreSQL"
-# (Add other db param initializations for pg_host_general etc. if needed, or rely on text_input defaults)
-
-# Initialize other widget states to avoid issues on first run after mode switch or load
-# These are examples, more might be needed as UI is rebuilt
-# For Population Anomaly Detection
-if 'if_contam_general' not in st.session_state: st.session_state.if_contam_general = 0.1
-if 'ocsvm_nu_general' not in st.session_state: st.session_state.ocsvm_nu_general = 0.05
-if 'ocsvm_kernel_general' not in st.session_state: st.session_state.ocsvm_kernel_general = "rbf"
-if 'ocsvm_gamma_general' not in st.session_state: st.session_state.ocsvm_gamma_general = "scale"
-# For Clustering
-if 'scale_data_clustering_kmeans_general' not in st.session_state: st.session_state.scale_data_clustering_kmeans_general = True
-if 'scale_data_clustering_dbscan_general' not in st.session_state: st.session_state.scale_data_clustering_dbscan_general = True
-if 'k_min_stats_general' not in st.session_state: st.session_state.k_min_stats_general = 2
-if 'k_max_stats_general' not in st.session_state: st.session_state.k_max_stats_general = 10
-if 'kmeans_k_final_general' not in st.session_state: st.session_state.kmeans_k_final_general = 3
-if 'dbscan_eps_general' not in st.session_state: st.session_state.dbscan_eps_general = 0.5
-if 'dbscan_min_samples_general' not in st.session_state: st.session_state.dbscan_min_samples_general = 5
-# For Surrogate Tree
-if 'surrogate_tree_depth_general' not in st.session_state: st.session_state.surrogate_tree_depth_general = 4
-
-# Feature Engineering Defaults
-if 'fe_acf_lags_general' not in st.session_state:
-    st.session_state.fe_acf_lags_general = [1, 5, 10]
-if 'fe_rolling_windows_general' not in st.session_state:
-    st.session_state.fe_rolling_windows_general = [1, 5, 10, 20]
-
-
-# === GENERAL ANALYSIS MODE ===
-if app_mode == "General Analysis":
-    st.header("General Analysis Mode")
-
-    # --- Database Connection (Sidebar) ---
-    # (Import connect_postgres, fetch_postgres_data, connect_elasticsearch, fetch_elasticsearch_data from src.database)
-    # For now, placeholder for brevity. Subtask should re-implement full DB connection UI from previous state.
-    # This was: st.sidebar.header("Database Connection"), db_type selectbox, text_inputs for host, port, etc.
-    # buttons for connect and fetch. On fetch, data_df_original is populated and states are reset.
-    # Crucially, on successful fetch:
-    #   st.session_state.data_df_original = fetched_df
-    #   reset_all_dependent_states() # Keep existing event_df, db_conn
-    #   st.session_state.data_df = st.session_state.data_df_original.copy()
-
-    # --- Database Connection UI (Sidebar) ---
-    st.sidebar.header("PostgreSQL Connection")
-    st.session_state.db_host = st.sidebar.text_input("Host", value=st.session_state.db_host, key="pg_host_input")
-    st.session_state.db_port = st.sidebar.text_input("Port", value=st.session_state.db_port, key="pg_port_input")
-    st.session_state.db_name = st.sidebar.text_input("Database Name", value=st.session_state.db_name, key="pg_dbname_input")
-    st.session_state.db_user = st.sidebar.text_input("User", value=st.session_state.db_user, key="pg_user_input")
-    st.session_state.db_password = st.sidebar.text_input("Password", type="password", value=st.session_state.db_password, key="pg_password_input")
-
-    if st.sidebar.button("Connect to PostgreSQL", key="pg_connect_button"):
-        logger.info("Attempting to connect to PostgreSQL...")
-        db_config = {
-            "host": st.session_state.db_host,
-            "port": st.session_state.db_port,
-            "dbname": st.session_state.db_name,
-            "user": st.session_state.db_user,
-            "password": st.session_state.db_password,
-        }
-        conn, err_msg = connect_postgres(db_config)
-        if err_msg:
-            st.sidebar.error(f"Connection Failed: {err_msg}")
-            logger.error("PostgreSQL connection failed: %s", err_msg) # exc_info=True is better in connect_postgres itself
-            st.session_state.db_conn = None
-            st.session_state.available_schemas = [] # Clear schemas on failed connection
-            st.session_state.available_tables = []  # Clear tables on failed connection
-            st.session_state.selected_schema = None
-            st.session_state.selected_table = None
+if app_mode == "Guided Workflows":
+    # ... (Guided Workflow logic as defined in previous step) ...
+    st.sidebar.header("Available Workflows")
+    selected_workflow = st.sidebar.selectbox( "Select a Guided Workflow:", ["Potential Failure Investigation"], key="guided_workflow_selector")
+    st.sidebar.markdown("---")
+    st.header(f"Guided Workflow: {selected_workflow}")
+    if selected_workflow == "Potential Failure Investigation":
+        st.subheader("Step 1: Prerequisites")
+        prereq_met = True
+        if st.session_state.get('all_device_features_df', pd.DataFrame()).empty:
+            st.warning("Compute 'All Device Features' first in 'General Analysis' mode."); prereq_met = False
+        clustering_results_wf = st.session_state.get('clustering_results', {})
+        if not clustering_results_wf or not isinstance(clustering_results_wf.get('labels'), pd.Series) or clustering_results_wf['labels'].empty:
+            st.warning("Run Device Behavior Clustering first in 'General Analysis' mode."); prereq_met = False
+        if not prereq_met: st.stop()
+        st.success("Prerequisites met.")
+        st.subheader("Step 2: Select At-Risk Cluster(s)")
+        cluster_labels_series_wf = st.session_state.clustering_results['labels']
+        available_clusters_wf = sorted(cluster_labels_series_wf.unique()); available_clusters_str_wf = [str(c) for c in available_clusters_wf]
+        selected_at_risk_clusters_str_wf = st.multiselect("Select 'at-risk' cluster(s):", options=available_clusters_str_wf, key="at_risk_cluster_multiselect_wf")
+        selected_at_risk_clusters_wf = []
+        for s_cluster in selected_at_risk_clusters_str_wf:
+            try: selected_at_risk_clusters_wf.append(int(s_cluster))
+            except ValueError:
+                try: selected_at_risk_clusters_wf.append(float(s_cluster))
+                except ValueError: st.error(f"Could not parse cluster label: {s_cluster}")
+        if not selected_at_risk_clusters_wf: st.info("Select cluster(s) to proceed."); st.stop()
+        st.subheader("Step 3: Key Characteristics of Selected At-Risk Cluster(s)")
+        features_df_cleaned_wf = st.session_state.all_device_features_df.dropna()
+        if features_df_cleaned_wf.empty: st.error("Cleaned features empty."); st.stop()
+        combined_risk_labels_wf = cluster_labels_series_wf.isin(selected_at_risk_clusters_wf).map({True: 'At-Risk', False: 'Not At-Risk'})
+        if combined_risk_labels_wf.nunique() > 1:
+            importance_df_wf, error_imp_wf = get_feature_importance_for_clusters_anova(features_df_cleaned_wf, combined_risk_labels_wf)
+            if error_imp_wf: st.warning(f"ANOVA error: {error_imp_wf}")
+            elif importance_df_wf is not None and not importance_df_wf.empty: st.write("Top Distinguishing Features (At-Risk vs. Others):"); st.dataframe(importance_df_wf.head(5))
+            else: st.info("No significant distinguishing features (ANOVA).")
+        else: st.info("Only one group for ANOVA.")
+        mean_summary_df_wf, error_means_wf = get_cluster_feature_summary(features_df_cleaned_wf, combined_risk_labels_wf)
+        if error_means_wf: st.warning(f"Mean summary error: {error_means_wf}")
+        elif mean_summary_df_wf is not None and not mean_summary_df_wf.empty: st.write("Mean Features (At-Risk vs. Others):"); st.dataframe(mean_summary_df_wf)
+        st.subheader("Step 4: Devices to Monitor")
+        devices_in_at_risk_clusters_wf = cluster_labels_series_wf[cluster_labels_series_wf.isin(selected_at_risk_clusters_wf)].index.tolist()
+        if not devices_in_at_risk_clusters_wf: st.info("No devices in selected cluster(s).")
         else:
             st.session_state.db_conn = conn
             st.sidebar.success("Successfully connected to PostgreSQL!")
@@ -614,18 +632,23 @@ if app_mode == "General Analysis":
                 st.sidebar.error(message)
                 logger.warning("Failed to apply loaded settings: %s", message)
         except Exception as e:
-            st.sidebar.error(f"Error parsing or applying settings file: {e}")
-            logger.error("Error parsing or applying settings file: %s", e, exc_info=True)
-        # It's good practice to clear the file uploader after processing to avoid re-processing on every script run
-        # However, direct assignment to the key in st.session_state for file_uploader is the way to "reset" it.
-        # This is done above on success. If an error occurs, user might want to try again or upload different file.
+            st.sidebar.error(f"Error parsing settings file: {e}")
 
-
-    # --- Main Area Data Display ---
-    st.subheader("Loaded Main Data Overview")
-    if not st.session_state.data_df_original.empty:
-        st.dataframe(st.session_state.data_df_original.head())
-        st.info(f"Original data shape: {st.session_state.data_df_original.shape}")
+    # This needs to be structured correctly: the following elif and else are for the "if not st.session_state.data_df_original.empty:" block
+    elif not st.session_state.data_df_original.empty and temp_id_col_name in st.session_state.data_df_original.columns:
+         if (st.session_state.time_series_specs.get("timestamp_col","None")=="None" or not st.session_state.time_series_specs.get("value_cols",[])):
+                try: del st.session_state.data_df_original[temp_id_col_name]
+                except KeyError:pass
+                if temp_id_col_name in st.session_state.data_df.columns:
+                    try: del st.session_state.data_df[temp_id_col_name]
+                    except KeyError:pass
+    else: st.sidebar.info("Load data for TS settings.")
+    st.sidebar.markdown("---"); st.sidebar.header("Population Analysis Settings")
+    compute_all_button_disabled_general = not (st.session_state.time_series_specs.get("timestamp_col")!="None" and st.session_state.time_series_specs.get("selected_value_col_for_analysis")!="None" and not st.session_state.data_df_original.empty)
+    if compute_all_button_disabled_general: st.sidebar.warning("Load data & select Timestamp & Value in 'Time Series Settings' for population features.")
+    if st.sidebar.button("Compute Features for ALL Devices", key="compute_all_features_button_general", disabled=compute_all_button_disabled_general):
+        st.session_state.running_all_features_computation=True; st.session_state.all_device_features_df=pd.DataFrame(); st.session_state.population_anomaly_results={}; st.session_state.clustering_results={}; st.session_state.kmeans_stats_df=None; st.session_state.res_df_anomalies_sorted=pd.DataFrame(); st.session_state.surrogate_tree_explainer = None
+        # Determine global top event types if event_df is loaded
         if not st.session_state.event_df.empty:
             st.subheader("Loaded Event Data Overview")
             st.dataframe(st.session_state.event_df.head())
@@ -903,513 +926,219 @@ if app_mode == "General Analysis":
         if features_df_cleaned.empty:
             st.warning("No data available for population analysis after removing rows with NaN features. Some devices might have had issues generating a full feature set.")
         else:
-            st.info(f"Cleaned feature matrix for ML (NaN rows dropped): {features_df_cleaned.shape}")
-
-            pop_tab_anomalies, pop_tab_clustering = st.tabs([
-                "🕵️ Anomaly Detection (All Devices)", "🧩 Device Behavior Clustering"
-            ])
-
-            with pop_tab_anomalies:
-                st.subheader("Anomaly Detection on Device Features")
-                # Method selection & parameters
-                anomaly_method_pop = st.selectbox(
-                    "Anomaly Detection Method",
-                    ["Isolation Forest", "One-Class SVM"],
-                    key="anomaly_method_pop_general"
-                )
-
+            tab_pop_anomalies, tab_pop_clustering = st.tabs(["🕵️ Anomaly Detection (All Devices)", "🧩 Device Behavior Clustering"])
+            with tab_pop_anomalies:
+                st.subheader("Unsupervised Anomaly Detection on Device Features")
+                if "last_pop_anomaly_df_id" not in st.session_state or id(features_df_cleaned) != st.session_state.get("last_pop_anomaly_df_id"): st.session_state.population_anomaly_results = {}; st.session_state.last_pop_anomaly_df_id = id(features_df_cleaned); st.session_state.surrogate_tree_explainer = None
+                anomaly_method_pop = st.selectbox("Method", ["Isolation Forest", "One-Class SVM"], key="pop_an_method_general")
                 if anomaly_method_pop == "Isolation Forest":
-                    st.session_state.if_contam_general = st.slider(
-                        "Contamination (Isolation Forest)", 0.01, 0.5, st.session_state.if_contam_general, 0.01,
-                        key="if_contam_slider_general" # Changed key
-                    )
+                    contam_if = st.slider("Contamination", 0.01, 0.5, 0.1, 0.01, key="if_contam_general")
+                    # Removed individual save/load placeholder for Isolation Forest
                     if st.button("Run Isolation Forest", key="run_if_pop_general"):
-                        labels, scores, error = detect_anomalies_isolation_forest(features_df_cleaned, contamination=st.session_state.if_contam_general)
-                        st.session_state.population_anomaly_results = {"labels": labels, "scores": scores, "error": error, "method": "Isolation Forest"}
-
+                        labels, scores, error_msg = detect_anomalies_isolation_forest(features_df_cleaned, contamination=contam_if)
+                        if error_msg: st.error(error_msg); else: st.session_state.population_anomaly_results = {'method':'Isolation Forest', 'labels':labels, 'scores':scores}; st.success("IForest complete.")
                 elif anomaly_method_pop == "One-Class SVM":
-                    st.session_state.ocsvm_nu_general = st.slider(
-                        "Nu (One-Class SVM - approx. outlier fraction)", 0.01, 0.5, st.session_state.ocsvm_nu_general, 0.01,
-                        key="ocsvm_nu_slider_general" # Changed key
-                    )
-                    st.session_state.ocsvm_kernel_general = st.selectbox(
-                        "Kernel", ["rbf", "linear", "poly", "sigmoid"],
-                        index=["rbf", "linear", "poly", "sigmoid"].index(st.session_state.ocsvm_kernel_general),
-                        key="ocsvm_kernel_selector_general" # Changed key
-                    )
-                    st.session_state.ocsvm_gamma_general = st.select_slider( # Changed to select_slider
-                        "Gamma", options=['scale', 'auto', 0.001, 0.01, 0.1, 1],
-                        value=st.session_state.ocsvm_gamma_general,
-                        key="ocsvm_gamma_slider_general" # Changed key
-                    )
+                    nu_ocsvm = st.slider("Nu", 0.01, 0.5, 0.05, 0.01, key="ocsvm_nu_general"); kernel_ocsvm = st.selectbox("Kernel", ["rbf", "linear", "poly", "sigmoid"], key="ocsvm_kernel_general"); gamma_ocsvm_text = st.text_input("Gamma", value='scale', key="ocsvm_gamma_general");
+                    try: gamma_val = float(gamma_ocsvm_text)
+                    except ValueError: gamma_val = gamma_ocsvm_text
+                    # Removed individual save/load placeholder for One-Class SVM
                     if st.button("Run One-Class SVM", key="run_ocsvm_pop_general"):
-                        labels, scores, error = detect_anomalies_one_class_svm(
-                            features_df_cleaned, nu=st.session_state.ocsvm_nu_general, kernel=st.session_state.ocsvm_kernel_general, gamma=st.session_state.ocsvm_gamma_general
-                        )
-                        st.session_state.population_anomaly_results = {"labels": labels, "scores": scores, "error": error, "method": "One-Class SVM"}
+                        labels, scores, error_msg = detect_anomalies_one_class_svm(features_df_cleaned, nu=nu_ocsvm, kernel=kernel_ocsvm, gamma=gamma_val)
+                        if error_msg: st.error(error_msg); else: st.session_state.population_anomaly_results = {'method':'One-Class SVM', 'labels':labels, 'scores':scores}; st.success("OC-SVM complete.")
+                pop_results = st.session_state.get('population_anomaly_results')
+                if pop_results and 'labels' in pop_results:
+                    st.write(f"Results: {pop_results['method']}"); res_df = pd.DataFrame({'label':pop_results['labels'], 'score':pop_results['scores']}).sort_values(by='score'); st.session_state.res_df_anomalies_sorted = res_df
+                    st.write(f"Found {(res_df['label'] == -1).sum()} anomalies."); st.dataframe(res_df.head())
+                    fig, ax = plt.subplots(); scores_sorted = pop_results['scores'].sort_values(); scores_sorted.plot(kind='bar', ax=ax, title=f"Scores ({pop_results['method']})"); ax.set_xticks([]); ax.set_ylabel("Score"); st.pyplot(fig)
+                    st.subheader("Explain Anomalies"); comparison_df, error_comp = compare_anomalous_vs_normal_features(features_df_cleaned, pop_results["labels"], anomalous_label_val=-1)
+                    if error_comp: st.error(f"Comparison error: {error_comp}")
+                    elif comparison_df is not None and not comparison_df.empty: st.write("Mean Feature Comparison (Anomalous vs. Normal):"); st.dataframe(comparison_df.head(10))
 
-                # Display anomaly results
-                pop_anom_res = st.session_state.get("population_anomaly_results", {})
-                if pop_anom_res:
-                    if pop_anom_res.get("error"):
-                        st.error(f"Error during {pop_anom_res.get('method', '')} anomaly detection: {pop_anom_res['error']}")
-                    elif pop_anom_res.get("labels") is not None:
-                        st.success(f"{pop_anom_res.get('method', '')} completed. Found {sum(pop_anom_res['labels'] == -1)} anomalies.")
-                        res_df = features_df_cleaned.copy()
-                        res_df['anomaly_label'] = pop_anom_res['labels']
-                        if pop_anom_res.get("scores") is not None:
-                            res_df['anomaly_score'] = pop_anom_res['scores']
+                    # Updated call to generate_anomaly_summary_text
+                    if not st.session_state.res_df_anomalies_sorted.empty:
+                        top_anomaly_id = st.session_state.res_df_anomalies_sorted.index[0]
+                        top_anomaly_score = st.session_state.res_df_anomalies_sorted.iloc[0]["score"]
+                        surrogate_importances_for_summary = st.session_state.get("surrogate_tree_explainer", {}).get("importances")
 
-                        st.session_state.res_df_anomalies_sorted = res_df.sort_values(by='anomaly_score', ascending=True if pop_anom_res.get('method') == "Isolation Forest" else False) # Lower IF scores are more anomalous
-                        st.dataframe(st.session_state.res_df_anomalies_sorted[st.session_state.res_df_anomalies_sorted['anomaly_label'] == -1].head())
-
-                        # --- Explain Anomalies Sub-section ---
-                        st.markdown("---")
-                        st.subheader("Explain Anomalies")
-                        anomalous_devices_df = st.session_state.res_df_anomalies_sorted[st.session_state.res_df_anomalies_sorted['anomaly_label'] == -1]
-                        normal_devices_df = st.session_state.res_df_anomalies_sorted[st.session_state.res_df_anomalies_sorted['anomaly_label'] == 1]
-
-                        if not anomalous_devices_df.empty and not normal_devices_df.empty:
-                            comparison_df, anova_results = compare_anomalous_vs_normal_features(anomalous_devices_df.drop(columns=['anomaly_label', 'anomaly_score'], errors='ignore'),
-                                                                                              normal_devices_df.drop(columns=['anomaly_label', 'anomaly_score'], errors='ignore'))
-                            st.write("Mean Feature Values (Anomalous vs. Normal):")
-                            st.dataframe(comparison_df)
-                            st.write("ANOVA F-statistic & p-value (for difference in means):")
-                            st.dataframe(anova_results)
-
-                            # Surrogate Model
-                            st.markdown("##### Surrogate Decision Tree for Anomaly Explanation")
-                            st.session_state.surrogate_tree_depth_general = st.slider("Max Tree Depth", 2, 10, st.session_state.surrogate_tree_depth_general, 1, key="surrogate_depth_pop_anom_general")
-                            if st.button("Train Surrogate Tree", key="train_surrogate_pop_anom_general"):
-                                st.session_state.surrogate_tree_explainer, error_surrogate = explain_anomalies_with_surrogate_model(
-                                    features_df_cleaned, pop_anom_res['labels'], max_depth=st.session_state.surrogate_tree_depth_general
-                                )
-                                if error_surrogate: st.error(error_surrogate)
-                                elif st.session_state.surrogate_tree_explainer: st.success("Surrogate tree trained.")
-
-                            if st.session_state.get('surrogate_tree_explainer'):
-                                tree_model = st.session_state.surrogate_tree_explainer['model']
-                                tree_feature_names = st.session_state.surrogate_tree_explainer['feature_names']
-                                tree_importances = pd.Series(tree_model.feature_importances_, index=tree_feature_names).sort_values(ascending=False)
-                                st.write("Top differentiating features from Surrogate Tree:")
-                                st.dataframe(tree_importances.head(10))
-
-                                fig_tree, ax_tree = plt.subplots(figsize=(20, 10)) # Adjust size as needed
-                                plot_tree(tree_model, feature_names=tree_feature_names, class_names=['Normal', 'Anomaly'], filled=True, rounded=True, ax=ax_tree, fontsize=10)
-                                st.pyplot(fig_tree)
-
-                                # Anomaly Summary Text (using surrogate importances if available)
-                                top_anomalous_device_id = anomalous_devices_df.index[0] if not anomalous_devices_df.empty else "N/A"
-                                anomaly_summary_txt = generate_anomaly_summary_text(
-                                    anomalous_devices_df.drop(columns=['anomaly_label', 'anomaly_score'], errors='ignore'),
-                                    normal_devices_df.drop(columns=['anomaly_label', 'anomaly_score'], errors='ignore'),
-                                    top_anomalous_device_id,
-                                    comparison_df,
-                                    surrogate_tree_importances=tree_importances
-                                )
-                                st.write(f"Summary for most anomalous device ({top_anomalous_device_id}):")
-                                st.markdown(anomaly_summary_txt)
+                        st.markdown("---"); st.markdown(f"**Summary for Top Anomaly ({top_anomaly_id}):**")
+                        summary_text = generate_anomaly_summary_text(
+                            top_anomaly_id,
+                            top_anomaly_score,
+                            comparison_df, # This is the compare_anomalous_vs_normal_features output
+                            surrogate_tree_importances=surrogate_importances_for_summary
+                        ); st.markdown(summary_text)
+                    else: st.info("No data for feature comparison (for summary text).")
+                    st.markdown("---"); st.subheader("Detailed Anomaly Explanation (Surrogate Decision Tree)"); st.markdown("This trains a Decision Tree to mimic the unsupervised anomaly detector.")
+                    if st.session_state.get("population_anomaly_results") and "labels" in st.session_state.population_anomaly_results and not features_df_cleaned.empty:
+                        surrogate_max_depth = st.slider("Surrogate Tree Max Depth", 2, 10, 4, 1, key="surrogate_tree_depth_slider_general", help="Complexity of explanation tree.")
+                        if st.button("Train & Show Surrogate Explanation Tree", key="train_surrogate_tree_button_general"):
+                            current_pop_anomaly_labels = st.session_state.population_anomaly_results["labels"]
+                            if current_pop_anomaly_labels.nunique() < 2: st.error("Need at least two classes (anomalous/normal) for surrogate tree."); st.session_state.surrogate_tree_explainer = None
                             else:
-                                # Anomaly Summary Text (without surrogate importances)
-                                top_anomalous_device_id = anomalous_devices_df.index[0] if not anomalous_devices_df.empty else "N/A"
-                                anomaly_summary_txt = generate_anomaly_summary_text(
-                                    anomalous_devices_df.drop(columns=['anomaly_label', 'anomaly_score'], errors='ignore'),
-                                    normal_devices_df.drop(columns=['anomaly_label', 'anomaly_score'], errors='ignore'),
-                                    top_anomalous_device_id,
-                                    comparison_df
-                                )
-                                st.write(f"Summary for most anomalous device ({top_anomalous_device_id}):")
-                                st.markdown(anomaly_summary_txt)
+                                with st.spinner("Training surrogate tree..."):
+                                    tree_model, tree_importances, tree_report, error_tree = explain_anomalies_with_surrogate_model(features_df_cleaned, current_pop_anomaly_labels, max_depth=surrogate_max_depth, test_size=0)
+                                    if error_tree: st.error(f"Surrogate tree error: {error_tree}"); st.session_state.surrogate_tree_explainer = None
+                                    elif tree_model and tree_importances is not None: st.session_state.surrogate_tree_explainer = {"model": tree_model, "importances": tree_importances, "report": tree_report }; st.success("Surrogate tree trained.")
+                                    else: st.warning("Surrogate training produced no model/importances."); st.session_state.surrogate_tree_explainer = None
+                        if st.session_state.get("surrogate_tree_explainer"):
+                            explainer_results = st.session_state.surrogate_tree_explainer
+                            if explainer_results.get("model"):
+                                st.write("**Surrogate Tree - Top Feature Importances:**"); st.dataframe(explainer_results["importances"].head(10).rename("Importance"))
+                                st.write("**Surrogate Decision Tree Visualization:**"); fig_tree, ax_tree = plt.subplots(figsize=(20, 10));
+                                try:
+                                    class_names_tree = ["Anomalous", "Normal"];
+                                    if set(explainer_results["model"].classes_) != {-1, 1} and len(explainer_results["model"].classes_) == 2: c0, c1 = sorted(explainer_results["model"].classes_); class_names_tree = [f"Class {c0}", f"Class {c1}"]
+                                    plot_tree(explainer_results["model"], filled=True, rounded=True, feature_names=features_df_cleaned.columns.tolist(), class_names=class_names_tree, ax=ax_tree, fontsize=10, max_depth=surrogate_max_depth )
+                                    st.pyplot(fig_tree)
+                                except Exception as e_plot: st.error(f"Error plotting tree: {e_plot}")
+                            else: st.info("Surrogate tree model not available.")
+                    else: st.info("Run Population Anomaly Detection for surrogate tree explanations.")
 
-
-                            # Event Correlation with Anomalies
-                            if not st.session_state.event_df.empty and id_cols : # Check if event data and ID cols exist
-                                st.markdown("##### Event Correlation with Anomalies")
-                                event_corr_anom_df, err_corr_anom = analyze_event_correlations(
-                                    st.session_state.event_df,
-                                    pop_anom_res['labels'], # Anomaly labels
-                                    features_df_cleaned.index, # Device IDs from feature matrix
-                                    ts_specs.get('event_device_id_col', 'device_id'),
-                                    ts_specs.get('event_event_type_col', 'event_type'),
-                                    st.session_state.get("global_top_event_types_cleaned", []) # Use globally defined event types for consistency
-                                )
-                                if err_corr_anom: st.error(f"Event correlation error: {err_corr_anom}")
-                                elif not event_corr_anom_df.empty:
-                                    st.write("Mean Event Counts (Anomalous vs. Normal Devices):")
-                                    st.dataframe(event_corr_anom_df)
-                                else: st.info("No event correlation data generated.")
-                        else:
-                            st.info("Not enough normal or anomalous devices to compare features or explain.")
-
-
-            with pop_tab_clustering:
-                st.subheader("Device Behavior Clustering")
-                # Method selection & parameters
-                clustering_method_pop = st.selectbox(
-                    "Clustering Method", ["K-Means", "DBSCAN"], key="clustering_method_pop_general"
-                )
-
-                # Common: Scale data option
-                # Updated to use method-specific keys for scaling to persist selection correctly
-                scale_data_for_clustering = False
-                if clustering_method_pop == "K-Means":
-                    st.session_state.scale_data_clustering_kmeans_general = st.checkbox("Scale Features (StandardScaler)", value=st.session_state.scale_data_clustering_kmeans_general, key="scale_kmeans_pop_general")
-                    scale_data_for_clustering = st.session_state.scale_data_clustering_kmeans_general
-                elif clustering_method_pop == "DBSCAN":
-                    st.session_state.scale_data_clustering_dbscan_general = st.checkbox("Scale Features (StandardScaler)", value=st.session_state.scale_data_clustering_dbscan_general, key="scale_dbscan_pop_general")
-                    scale_data_for_clustering = st.session_state.scale_data_clustering_dbscan_general
-
-                if clustering_method_pop == "K-Means":
-                    # K-Means specific: K selection (Elbow/Silhouette)
-                    cols_k_stats = st.columns(2)
-                    st.session_state.k_min_stats_general = cols_k_stats[0].number_input("Min K for Stats", 2, 10, st.session_state.k_min_stats_general, 1, key="k_min_pop_general")
-                    st.session_state.k_max_stats_general = cols_k_stats[1].number_input("Max K for Stats", st.session_state.k_min_stats_general + 1, 20, st.session_state.k_max_stats_general, 1, key="k_max_pop_general")
-                    if st.button("Calculate K-Means Stats (Elbow/Silhouette)", key="run_kmeans_stats_pop_general"):
-                        k_stats_df, error_k_stats = get_kmeans_elbow_silhouette_data(
-                            features_df_cleaned, range(st.session_state.k_min_stats_general, st.session_state.k_max_stats_general + 1), scale_features=scale_data_for_clustering
-                        )
-                        if error_k_stats: st.error(error_k_stats)
-                        else: st.session_state.kmeans_stats_df = k_stats_df
-
-                    if st.session_state.get("kmeans_stats_df") is not None:
-                        st.write("Elbow Method (Inertia):")
-                        st.line_chart(st.session_state.kmeans_stats_df.set_index('K')['Inertia'])
-                        st.write("Silhouette Scores:")
-                        st.line_chart(st.session_state.kmeans_stats_df.set_index('K')['Silhouette Score'])
-
-                    st.session_state.kmeans_k_final_general = st.number_input("Number of Clusters (K)", 2, 20, st.session_state.kmeans_k_final_general, 1, key="k_final_pop_general")
-                    if st.button("Run K-Means Clustering", key="run_kmeans_pop_general"):
-                        labels, centers, error = perform_kmeans_clustering(features_df_cleaned, k=st.session_state.kmeans_k_final_general, scale_features=scale_data_for_clustering)
-                        st.session_state.clustering_results = {"labels": labels, "centers": centers, "error": error, "method": "K-Means", "scaled":scale_data_for_clustering}
-
-                elif clustering_method_pop == "DBSCAN":
-                    st.session_state.dbscan_eps_general = st.slider("Epsilon (DBSCAN)", 0.1, 5.0, st.session_state.dbscan_eps_general, 0.1, key="dbscan_eps_pop_general")
-                    st.session_state.dbscan_min_samples_general = st.number_input("Min Samples (DBSCAN)", 1, 20, st.session_state.dbscan_min_samples_general, 1, key="dbscan_min_samples_pop_general")
-                    if st.button("Run DBSCAN Clustering", key="run_dbscan_pop_general"):
-                        labels, error = perform_dbscan_clustering(features_df_cleaned, eps=st.session_state.dbscan_eps_general, min_samples=st.session_state.dbscan_min_samples_general, scale_features=scale_data_for_clustering)
-                        st.session_state.clustering_results = {"labels": labels, "error": error, "method": "DBSCAN", "scaled":scale_data_for_clustering}
-
-                # Display clustering results
-                pop_cluster_res = st.session_state.get("clustering_results", {})
-                if pop_cluster_res:
-                    if pop_cluster_res.get("error"):
-                        st.error(f"Error during {pop_cluster_res.get('method', '')} clustering: {pop_cluster_res['error']}")
-                    elif pop_cluster_res.get("labels") is not None:
-                        labels_c = pop_cluster_res['labels']
-                        n_clusters_ = len(set(labels_c)) - (1 if -1 in labels_c else 0) # Number of clusters, excluding noise if present
-                        st.success(f"{pop_cluster_res.get('method', '')} completed. Found {n_clusters_} clusters (excluding noise).")
-
-                        # Store labels with original feature data for explanation
-                        clustered_df = features_df_cleaned.copy() # Use cleaned (NaN-dropped) features
-                        clustered_df['cluster_label'] = labels_c
-                        st.session_state.clustered_features_df_for_explain = clustered_df # Save for explainability
-
-                        st.write("Cluster Counts:")
-                        st.dataframe(pd.Series(labels_c).value_counts().rename("Count"))
-                        if pop_cluster_res.get("method") == "K-Means" and pop_cluster_res.get("centers") is not None:
-                            st.write("Cluster Centers:")
-                            st.dataframe(pop_cluster_res["centers"])
-
-                        # --- Explain Clusters Sub-section ---
+                    # Event Correlations for Anomalies
+                    event_cols_in_features_df_anom = [col for col in features_df_cleaned.columns if col.startswith(st.session_state.time_series_specs.get("selected_value_col_for_analysis", "value") + "_evt_count_")] # Assuming prefix structure
+                    if event_cols_in_features_df_anom: # Check if any event count features exist
                         st.markdown("---")
-                        st.subheader("Explain Clusters")
+                        st.subheader("Event Correlations with Anomalies")
+                        event_corr_anom_df, error_eca = analyze_event_correlations(
+                            features_df_cleaned,
+                            pop_results["labels"], # current_anomaly_labels
+                            event_feature_prefix=f"{st.session_state.time_series_specs.get('selected_value_col_for_analysis', 'value')}_evt_count_" # Ensure correct prefix
+                        )
+                        if error_eca:
+                            st.error(f"Error analyzing event correlations for anomalies: {error_eca}")
+                        elif event_corr_anom_df is not None and not event_corr_anom_df.empty:
+                            st.write("Mean Event Counts (Anomalous vs. Normal Devices vs. Overall):")
+                            st.dataframe(event_corr_anom_df)
+                        else:
+                            st.info("No event correlation data to display for anomalies or no event count features found matching the prefix.")
+                    # else: st.info("No event count features found in the dataset for anomaly correlation.") # Optional message
 
-                        # Feature Importance (ANOVA)
-                        anova_res_clusters, err_anova_c = get_feature_importance_for_clusters_anova(clustered_df, 'cluster_label')
-                        if err_anova_c: st.warning(f"Could not compute ANOVA for cluster explanation: {err_anova_c}")
-                        elif not anova_res_clusters.empty:
-                            st.write("Feature Importance for Distinguishing Clusters (ANOVA F-value, lower p-value is better):")
-                            st.dataframe(anova_res_clusters.sort_values(by='F-statistic', ascending=False).head(10))
+            with tab_pop_clustering:
+                st.subheader("Device Behavior Clustering")
+                if "last_clustering_df_id" not in st.session_state or id(features_df_cleaned) != st.session_state.get("last_clustering_df_id"): st.session_state.clustering_results = {}; st.session_state.kmeans_stats_df = None; st.session_state.last_clustering_df_id = id(features_df_cleaned)
+            cluster_method = st.selectbox("Method", ["K-Means", "DBSCAN"], key="pop_clust_method_general")
 
-                        # Cluster Feature Summary (Mean values)
-                        cluster_summary_df, overall_means_df, err_summary_c = get_cluster_feature_summary(clustered_df, 'cluster_label')
-                        if err_summary_c: st.warning(f"Could not compute cluster feature summary: {err_summary_c}")
-                        elif not cluster_summary_df.empty:
-                            st.write("Mean Feature Values per Cluster:")
-                            st.dataframe(cluster_summary_df)
+            # Specific scaling checkboxes per method
+            scale_data_kmeans_specific = False
+            scale_data_dbscan_specific = False
 
-                            # Textual Summary for each cluster
-                            for cluster_id in sorted(cluster_summary_df.index.tolist()):
-                                if cluster_id == -1 and pop_cluster_res.get("method") == "DBSCAN": continue # Skip noise for DBSCAN summary text
-                                summary_text_c = generate_cluster_summary_text(
-                                    cluster_id, cluster_summary_df, overall_means_df,
-                                    top_n_features=5, anova_results=anova_res_clusters
-                                )
-                                with st.expander(f"Detailed Summary for Cluster {cluster_id}"):
-                                    st.markdown(summary_text_c)
+                if cluster_method == "K-Means":
+                scale_data_kmeans_specific = st.checkbox("Scale data before K-Means", value=True, key="scale_data_clustering_kmeans_general")
+                st.write("Determine optimal K:"); k_min = st.number_input("Min K", 2, len(features_df_cleaned)-1 if len(features_df_cleaned)>2 else 2, 2, key="k_min_kstats_general"); k_max_val = min(10, len(features_df_cleaned)-1 if len(features_df_cleaned)>2 else 2); k_max = st.number_input("Max K", k_min, len(features_df_cleaned)-1 if len(features_df_cleaned)>2 else 2, k_max_val if k_max_val >= k_min else k_min, key="k_max_kstats_general")
+                    if st.button("Calc K-Means Stats", key="calc_km_stats_btn_general"):
+                    if k_max >= k_min: k_stats_df, err_msg = get_kmeans_elbow_silhouette_data(features_df_cleaned, k_range=range(k_min, k_max+1), scale_data=scale_data_kmeans_specific); # Use specific scale
+                        if err_msg: st.error(err_msg); else: st.session_state.kmeans_stats_df = k_stats_df
+                        else: st.warning("Max K >= Min K.")
+                    if st.session_state.get("kmeans_stats_df") is not None: k_stats_df_display = st.session_state.kmeans_stats_df; st.line_chart(k_stats_df_display.set_index('K')['Inertia']); st.line_chart(k_stats_df_display.set_index('K')['Silhouette Score'].dropna())
+                    k_final = st.number_input("Num Clusters (K)", 2, len(features_df_cleaned)-1 if len(features_df_cleaned)>2 else 2, 3, key="km_k_final_general");
+                # Removed individual save/load placeholder
+                    if st.button("Run K-Means", key="run_km_pop_btn_general"):
+                    labels, model, err_msg = perform_kmeans_clustering(features_df_cleaned, n_clusters=k_final, scale_data=scale_data_kmeans_specific) # Use specific scale
+                        if err_msg: st.error(err_msg); else: st.session_state.clustering_results = {'method':'K-Means', 'labels':labels, 'model':model, 'k':k_final}; st.success(f"K-Means complete (K={k_final}).")
+                elif cluster_method == "DBSCAN":
+                scale_data_dbscan_specific = st.checkbox("Scale data before DBSCAN", value=True, key="scale_data_clustering_dbscan_general")
+                    eps_dbscan = st.number_input("Epsilon", 0.01, 10.0, 0.5, 0.01, key="db_eps_general"); min_samples_dbscan = st.number_input("Min Samples", 1, 100, 5, 1, key="db_min_samples_general")
+                # Removed individual save/load placeholder
+                    if st.button("Run DBSCAN", key="run_db_pop_btn_general"):
+                    labels, model, err_msg = perform_dbscan_clustering(features_df_cleaned, eps=eps_dbscan, min_samples=min_samples_dbscan, scale_data=scale_data_dbscan_specific) # Use specific scale
+                        if err_msg: st.error(err_msg); else: st.session_state.clustering_results = {'method':'DBSCAN', 'labels':labels, 'model':model}; st.success("DBSCAN complete.")
+                clust_results = st.session_state.get('clustering_results')
+                if clust_results and 'labels' in clust_results:
+                    st.write(f"Results: {clust_results['method']}"); clust_summary = clust_results['labels'].value_counts().rename("Device Count").to_frame(); st.dataframe(clust_summary)
+                    if clust_results['method'] == 'K-Means' and clust_results.get('model'): st.write("Cluster Centers:"); centers_df = pd.DataFrame(clust_results['model'].cluster_centers_, columns=features_df_cleaned.columns); st.dataframe(centers_df)
+                    st.subheader("Explain Clusters"); importance_df, err_imp = get_feature_importance_for_clusters_anova(features_df_cleaned, clust_results["labels"])
+                    if err_imp: st.error(f"Importance error: {err_imp}")
+                    elif importance_df is not None and not importance_df.empty: st.write("Top Differentiating Features (ANOVA):"); st.dataframe(importance_df.head(10))
+                    else: st.info("Could not get feature importance.")
+                    summary_means_df, err_means = get_cluster_feature_summary(features_df_cleaned, clust_results["labels"])
+                    if err_means: st.error(f"Mean summary error: {err_means}")
+                    elif summary_means_df is not None and not summary_means_df.empty:
+                        st.write("Mean Feature Values per Cluster:"); st.dataframe(summary_means_df)
+                        overall_mean_features_for_summary = features_df_cleaned.mean() # Calculate overall means
+                        st.markdown("---"); st.markdown("**Cluster Summaries:**")
+                        for cluster_id_val in sorted(clust_results["labels"].unique()):
+                            cluster_name_disp = f"Cluster {cluster_id_val}" if not (cluster_id_val == -1 and clust_results.get("method") == "DBSCAN") else "Noise Points (DBSCAN Cluster -1)"
+                            cluster_size_val = (clust_results["labels"] == cluster_id_val).sum()
+                            cluster_means_for_this_one = summary_means_df.loc[cluster_id_val] if cluster_id_val in summary_means_df.index else pd.Series(dtype=float) # Handle if cluster_id not in summary (e.g. noise)
 
-                        # Event Correlation with Clusters
-                        if not st.session_state.event_df.empty and id_cols: # Check if event data and ID cols exist
-                            st.markdown("##### Event Correlation with Clusters")
-                            event_corr_cluster_df, err_corr_cluster = analyze_event_correlations(
-                                st.session_state.event_df,
-                                labels_c, # Cluster labels
-                                features_df_cleaned.index, # Device IDs from feature matrix
-                                ts_specs.get('event_device_id_col', 'device_id'),
-                                ts_specs.get('event_event_type_col', 'event_type'),
-                                st.session_state.get("global_top_event_types_cleaned", []) # Use globally defined event types
-                            )
-                            if err_corr_cluster: st.error(f"Event correlation error for clusters: {err_corr_cluster}")
-                            elif not event_corr_cluster_df.empty:
-                                st.write("Mean Event Counts per Cluster:")
-                                st.dataframe(event_corr_cluster_df)
-                            else: st.info("No event correlation data generated for clusters.")
+                            summary_text = generate_cluster_summary_text(
+                                cluster_name_disp,
+                                cluster_size_val,
+                                len(features_df_cleaned),
+                                cluster_mean_features_for_this_cluster=cluster_means_for_this_one,
+                                overall_mean_features=overall_mean_features_for_summary
+                            ); st.markdown(f"- {summary_text}")
+                    else: st.info("No cluster mean summary.")
 
-    # --- Validate Findings with Known Failures ---
-    if not st.session_state.get('all_device_features_df', pd.DataFrame()).empty:
-        st.markdown("---")
+                    # Event Correlations for Clusters
+                    event_cols_in_features_df_clust = [col for col in features_df_cleaned.columns if col.startswith(st.session_state.time_series_specs.get("selected_value_col_for_analysis", "value") + "_evt_count_")]
+                    if event_cols_in_features_df_clust:
+                        st.markdown("---")
+                        st.subheader("Event Correlations with Clusters")
+                        event_corr_clust_df, error_ecc = analyze_event_correlations(
+                            features_df_cleaned,
+                            clust_results["labels"], # current_cluster_labels
+                            event_feature_prefix=f"{st.session_state.time_series_specs.get('selected_value_col_for_analysis', 'value')}_evt_count_"
+                        )
+                        if error_ecc:
+                            st.error(f"Error analyzing event correlations for clusters: {error_ecc}")
+                        elif event_corr_clust_df is not None and not event_corr_clust_df.empty:
+                            st.write("Mean Event Counts per Cluster (vs. Overall):")
+                            st.dataframe(event_corr_clust_df)
+                        else:
+                            st.info("No event correlation data to display for clusters or no event count features found matching the prefix.")
+                    # else: st.info("No event count features found in the dataset for cluster correlation.") # Optional
+
+                    if not features_df_cleaned.empty: # This is for the feature distribution plot by cluster
+                        feat_to_plot = st.selectbox("Select feature to visualize by cluster", options=features_df_cleaned.columns.tolist(), key="clust_feat_plot_sel_general")
+                        if feat_to_plot: plot_df = features_df_cleaned.copy(); plot_df['cluster'] = clust_results['labels']; fig, ax = plt.subplots(); plot_df.boxplot(column=feat_to_plot, by='cluster', ax=ax, grid=False); ax.set_title(f"Distribution of '{feat_to_plot}' by Cluster"); ax.set_xlabel("Cluster"); ax.set_ylabel(feat_to_plot); plt.suptitle(''); st.pyplot(fig)
+    elif not st.session_state.get("running_all_features_computation") and st.session_state.get("compute_all_features_button_general"): st.warning("Feature computation for all devices resulted in an empty dataset.")
+    elif not st.session_state.data_df_original.empty : st.info("Compute 'All Device Features' from sidebar for population analysis.")
+
+    if not st.session_state.get("all_device_features_df", pd.DataFrame()).empty:
         st.header("🔬 Validate Findings with Known Failures")
-        st.markdown("""
-        If you have a list of Device/Entity IDs that are known to have experienced failures or specific issues,
-        you can input them here to see how they align with the anomaly detection and clustering results.
-        This helps assess the relevance of the automated findings.
-        """)
-
-        if 'failed_ids_text_area_general' not in st.session_state:
-            st.session_state.failed_ids_text_area_general = ""
-
-        failed_ids_input_general = st.text_area(
-            "Enter known problematic Device/Entity IDs (comma, semicolon, or newline separated):",
-            value=st.session_state.failed_ids_text_area_general,
-            key="failed_ids_text_area_general_widget", # Ensure a unique key for the widget itself
-            height=100
-        )
-
-        if st.button("Run Validation Analysis", key="run_validation_button_general"):
-            if failed_ids_input_general.strip():
-                # Parse IDs: handles comma, semicolon, or newline, and strips whitespace
-                parsed_known_failed_ids = [
-                    item.strip() for item in
-                    failed_ids_input_general.replace(',', ' ').replace(';', ' ').split()
-                    if item.strip()
-                ]
-                st.session_state.parsed_known_failed_ids_general = parsed_known_failed_ids # Save for potential reuse
-                st.write(f"Found {len(parsed_known_failed_ids)} unique known failed IDs for validation.")
-
-                # Validate against Anomaly Detection Results
-                pop_anom_res_val = st.session_state.get("population_anomaly_results", {})
-                res_df_anomalies_sorted_val = st.session_state.get("res_df_anomalies_sorted", pd.DataFrame())
-
-                if pop_anom_res_val and not res_df_anomalies_sorted_val.empty:
-                    st.subheader("Validation Against Anomaly Detection")
-                    anomalous_flagged_known_failures = res_df_anomalies_sorted_val[
-                        res_df_anomalies_sorted_val.index.isin(parsed_known_failed_ids) &
-                        (res_df_anomalies_sorted_val['anomaly_label'] == -1)
-                    ]
-                    num_caught = len(anomalous_flagged_known_failures)
-                    st.metric(
-                        label=f"Known Failures Flagged as Anomalous (by {pop_anom_res_val.get('method', 'N/A')})",
-                        value=f"{num_caught} / {len(parsed_known_failed_ids)}"
-                    )
-                    if num_caught > 0:
-                        st.write("Details of flagged known failures:")
-                        st.dataframe(anomalous_flagged_known_failures[['anomaly_label', 'anomaly_score']])
-                    else:
-                        st.info("None of the provided known failed IDs were flagged as anomalous by the current settings.")
-                else:
-                    st.warning("Anomaly detection results not available for validation. Please run population-level anomaly detection first.")
-
-                # Validate against Clustering Results
-                pop_cluster_res_val = st.session_state.get("clustering_results", {})
-                clustered_features_df_val = st.session_state.get("clustered_features_df_for_explain", pd.DataFrame())
-
-                if pop_cluster_res_val and not clustered_features_df_val.empty:
-                    st.subheader("Validation Against Clustering Results")
-                    known_failures_in_clusters = clustered_features_df_val[
-                        clustered_features_df_val.index.isin(parsed_known_failed_ids)
-                    ]
-                    if not known_failures_in_clusters.empty:
-                        st.write("Distribution of Known Failures Across Clusters:")
-                        st.dataframe(known_failures_in_clusters['cluster_label'].value_counts().rename("Count of Known Failures"))
-
-                        # Show full details of known failures and their assigned clusters
-                        st.write("Details of known failures and their assigned clusters:")
-                        st.dataframe(known_failures_in_clusters[['cluster_label'] + [col for col in known_failures_in_clusters.columns if col not in ['cluster_label']][:3]]) # Show label + first 3 features
-                    else:
-                        st.info("None of the provided known failed IDs were found in the clustered devices (they might have been filtered out due to NaN features).")
-                else:
-                    st.warning("Clustering results not available for validation. Please run population-level clustering first.")
+        st.markdown("Provide known failed Device IDs (one per line or comma-separated) to see how they map to detected anomalies or clusters.")
+        failed_ids_input = st.text_area("Enter known failed Device/Entity IDs", height=100, key="failed_ids_text_area_general")
+        if st.button("Run Validation Analysis", key="run_validation_btn_general") and failed_ids_input.strip():
+            parsed_ids = set(item.strip() for line in failed_ids_input.strip().split("\n") for item in line.split(",") if item.strip())
+            if not parsed_ids: st.warning("No valid failed IDs entered.")
             else:
-                st.warning("Please enter some known failed Device/Entity IDs.")
-        st.markdown("---")
+                st.write(f"Validating against {len(parsed_ids)} unique known failed IDs.")
+                available_ids_in_features = set(st.session_state.all_device_features_df.index.tolist())
+                valid_failed_ids_in_dataset = parsed_ids.intersection(available_ids_in_features)
+                if not valid_failed_ids_in_dataset: st.error("None of the provided failed IDs are in the current dataset's entities.")
+                else:
+                    st.info(f"{len(valid_failed_ids_in_dataset)} of your failed IDs are in the dataset and used for validation.")
+                    pop_anom_results = st.session_state.get("population_anomaly_results")
+                    if pop_anom_results and "labels" in pop_anom_results:
+                        st.subheader(f"Validation: Population Anomaly Detection ({pop_anom_results.get('method', 'N/A')})")
+                        anomalous_detected_ids = set(pop_anom_results["labels"][pop_anom_results["labels"] == -1].index.tolist())
+                        identified_failed_anomalies = valid_failed_ids_in_dataset.intersection(anomalous_detected_ids)
+                        st.metric(label="Known Failed Devices Flagged as Anomalous", value=f"{len(identified_failed_anomalies)} / {len(valid_failed_ids_in_dataset)}")
+                        if identified_failed_anomalies: st.write("IDs of known failures flagged as anomalous:", sorted(list(identified_failed_anomalies)))
+                    else: st.info("Run Population Anomaly Detection first for its validation.")
+                    clust_results_val = st.session_state.get("clustering_results")
+                    if clust_results_val and "labels" in clust_results_val:
+                        st.subheader(f"Validation: Device Behavior Clustering ({clust_results_val.get('method', 'N/A')})")
+                        cluster_labels_val = clust_results_val["labels"]; validation_summary_list = []
+                        for cluster_id_iter in sorted(cluster_labels_val.unique()):
+                            cluster_device_ids = set(cluster_labels_val[cluster_labels_val == cluster_id_iter].index.tolist())
+                            identified_failed_in_cluster = valid_failed_ids_in_dataset.intersection(cluster_device_ids)
+                            percentage_of_cluster = (len(identified_failed_in_cluster)/len(cluster_device_ids)*100) if len(cluster_device_ids)>0 else 0
+                            percentage_of_total_failed = (len(identified_failed_in_cluster)/len(valid_failed_ids_in_dataset)*100) if len(valid_failed_ids_in_dataset)>0 else 0
+                            cluster_name_val = f"Cluster {cluster_id_iter}" if not (cluster_id_iter == -1 and clust_results_val.get("method") == "DBSCAN") else "Noise (-1)"
+                            validation_summary_list.append({"Cluster ID": cluster_name_val, "Total Devices": len(cluster_device_ids), "Known Failed in Cluster": len(identified_failed_in_cluster), "% of Cluster (Failures)": f"{percentage_of_cluster:.2f}%", "% of Total Failures in Cluster": f"{percentage_of_total_failed:.2f}%"})
+                        if validation_summary_list: st.dataframe(pd.DataFrame(validation_summary_list).set_index("Cluster ID"))
+                        else: st.info("Could not generate cluster validation summary.")
+                    else: st.info("Run Clustering first for its validation.")
+    elif not st.session_state.data_df_original.empty : st.info("Compute 'All Device Features' from sidebar for validation.")
 
+    st.header("General Data Table Tools")
+    if not st.session_state.data_df.empty:
+        if st.checkbox("Show Summary Statistics for Full Loaded Data Preview", key="general_stats_cb_general"):
+            st.subheader("Summary Statistics (Loaded Data Preview)"); st.write(st.session_state.data_df.describe(include='all'))
+    else: st.info("Load data using the sidebar to enable general data tools.")
 
-# === GUIDED WORKFLOWS MODE ===
-elif app_mode == "Guided Workflows":
-    st.header("Guided Workflows Mode")
-    # Sidebar for workflow selection
-    available_workflows = ["Potential Failure Investigation"]
-    # Initialize selected_workflow in session_state if not present
-    if 'selected_workflow' not in st.session_state:
-        st.session_state.selected_workflow = available_workflows[0]
+# To run this app: streamlit run src/main.py
 
-    # Use on_change to reset workflow-specific state if workflow changes
-    def reset_workflow_state():
-        # Example: clear selected clusters if workflow changes or is re-selected
-        if 'at_risk_clusters_wf' in st.session_state:
-            del st.session_state['at_risk_clusters_wf']
-        # Add other workflow-specific state variables here to reset
-
-    selected_workflow = st.sidebar.selectbox(
-        "Choose a Guided Workflow:",
-        available_workflows,
-        key='selected_workflow_dropdown', # Main key for the widget
-        on_change=reset_workflow_state
-    )
-    st.session_state.selected_workflow = selected_workflow # Keep it synced with session_state for logic
-
-    # --- Potential Failure Investigation Workflow ---
-    if st.session_state.selected_workflow == "Potential Failure Investigation":
-        st.subheader("Guided Workflow: Potential Failure Investigation")
-        st.markdown("""
-        This workflow helps identify devices that might be at higher risk of failure by:
-        1.  Leveraging existing clustering results (from General Analysis mode).
-        2.  Allowing you to select 'at-risk' clusters.
-        3.  Showing what makes these clusters different.
-        4.  Listing devices in these at-risk clusters for further monitoring.
-        5.  Optionally cross-referencing with a list of already known failed devices.
-        """)
-
-        # Step 1: Prerequisites Check
-        st.markdown("---")
-        st.subheader("Step 1: Prerequisites")
-        prereq_features_df = st.session_state.get('all_device_features_df', pd.DataFrame())
-        prereq_clustering_results = st.session_state.get('clustering_results', {})
-        prereq_clustered_df_for_explain = st.session_state.get('clustered_features_df_for_explain', pd.DataFrame())
-
-        prereq_met = True
-        if prereq_features_df.empty:
-            st.error("Prerequisite Not Met: Device features have not been computed. Please go to 'General Analysis' mode, compute features for all devices, and run clustering.")
-            prereq_met = False
-        if not prereq_clustering_results or 'labels' not in prereq_clustering_results:
-            st.error("Prerequisite Not Met: Clustering has not been performed or results are unavailable. Please run clustering in 'General Analysis' mode.")
-            prereq_met = False
-        if prereq_clustered_df_for_explain.empty:
-            st.error("Prerequisite Not Met: Clustered feature data for explanation is missing. Ensure clustering was run successfully.")
-            prereq_met = False
-
-        if not prereq_met:
-            st.stop()
-        else:
-            st.success("Prerequisites met: Feature data and clustering results are available.")
-
-        # Step 2: Select At-Risk Cluster(s)
-        st.markdown("---")
-        st.subheader("Step 2: Select At-Risk Cluster(s)")
-
-        # Ensure clustered_df is available from session state (set during clustering in General Analysis)
-        clustered_df_wf = st.session_state.get('clustered_features_df_for_explain', pd.DataFrame())
-        if 'cluster_label' not in clustered_df_wf.columns:
-            st.error("Clustering labels not found in the feature data. Please re-run clustering.")
-            st.stop()
-
-        available_clusters_wf = sorted([c for c in clustered_df_wf['cluster_label'].unique() if c != -1]) # Exclude noise points for selection
-        if not available_clusters_wf:
-            st.warning("No valid clusters found (excluding noise points if any). Cannot proceed.")
-            st.stop()
-
-        # Initialize selected at_risk_clusters in session_state if not present
-        if 'at_risk_clusters_wf' not in st.session_state:
-             st.session_state.at_risk_clusters_wf = []
-
-        # Ensure selections are valid if clusters change (e.g. re-clustering in General mode)
-        valid_at_risk_selection = [c for c in st.session_state.at_risk_clusters_wf if c in available_clusters_wf]
-
-
-        selected_at_risk_clusters = st.multiselect(
-            "Select cluster(s) you consider 'at-risk' based on previous analysis or domain knowledge:",
-            options=available_clusters_wf,
-            default=valid_at_risk_selection, # Use the validated list
-            key='at_risk_clusters_multiselect_wf' # Unique key for this widget
-        )
-        st.session_state.at_risk_clusters_wf = selected_at_risk_clusters # Update session state
-
-        if not selected_at_risk_clusters:
-            st.info("Please select one or more at-risk clusters to proceed.")
-            st.stop()
-
-        st.success(f"Selected at-risk clusters: {selected_at_risk_clusters}")
-
-        # Step 3: Key Characteristics of Selected At-Risk Cluster(s)
-        st.markdown("---")
-        st.subheader("Step 3: Distinguishing Characteristics of At-Risk Group")
-
-        # Create a temporary 'at_risk_group' column: True if in selected_at_risk_clusters, False otherwise
-        # Only consider non-noise points for this comparison
-        comparison_df_wf = clustered_df_wf[clustered_df_wf['cluster_label'] != -1].copy()
-        comparison_df_wf['at_risk_group'] = comparison_df_wf['cluster_label'].isin(selected_at_risk_clusters)
-
-        # ANOVA for at-risk vs not-at-risk
-        anova_at_risk_vs_others, err_anova_wf = get_feature_importance_for_clusters_anova(comparison_df_wf, 'at_risk_group', group_true_label=True, group_false_label=False)
-        if err_anova_wf:
-            st.warning(f"Could not compute ANOVA for at-risk group comparison: {err_anova_wf}")
-        elif not anova_at_risk_vs_others.empty:
-            st.write("Top Features Distinguishing At-Risk Group (True) from Other Non-Noise Clusters (False):")
-            st.dataframe(anova_at_risk_vs_others.sort_values(by='F-statistic', ascending=False).head(10))
-
-        # Mean feature values for at-risk vs not-at-risk
-        at_risk_summary_df, others_summary_df, err_summary_wf = get_cluster_feature_summary(
-            comparison_df_wf, 'at_risk_group', group_true_label=True, group_false_label=False
-        )
-
-        if err_summary_wf:
-            st.warning(f"Could not compute feature summary for at-risk group comparison: {err_summary_wf}")
-        elif not at_risk_summary_df.empty and not others_summary_df.empty:
-            st.write("Mean Feature Values for At-Risk Group vs. Other Non-Noise Clusters:")
-            # Combine for easier side-by-side view - at_risk_summary_df and others_summary_df are Series
-            combined_summary_wf = pd.DataFrame({
-                "At-Risk Group (Mean)": at_risk_summary_df,
-                "Other Non-Noise Clusters (Mean)": others_summary_df
-            })
-            st.dataframe(combined_summary_wf)
-
-        # Step 4: Devices to Monitor
-        st.markdown("---")
-        st.subheader("Step 4: Devices to Monitor")
-
-        devices_in_at_risk_clusters = clustered_df_wf[clustered_df_wf['cluster_label'].isin(selected_at_risk_clusters)].index.tolist()
-        st.write(f"Found {len(devices_in_at_risk_clusters)} devices in the selected at-risk cluster(s): {', '.join(map(str,selected_at_risk_clusters))}")
-
-        if 'failed_ids_input_wf' not in st.session_state:
-            st.session_state.failed_ids_input_wf = ""
-
-        known_failed_ids_input_wf = st.text_area(
-            "Optional: Enter known failed Device/Entity IDs (comma, semicolon, or newline separated) to cross-reference:",
-            value=st.session_state.failed_ids_input_wf,
-            key="failed_ids_text_area_wf_widget", # Unique key
-            height=100
-        )
-
-        parsed_known_failed_ids_wf = []
-        if known_failed_ids_input_wf.strip():
-            parsed_known_failed_ids_wf = [
-                item.strip() for item in
-                known_failed_ids_input_wf.replace(',', ' ').replace(';', ' ').split()
-                if item.strip()
-            ]
-
-        devices_to_monitor_df_data = []
-        for device_id in devices_in_at_risk_clusters:
-            status = "Potentially At-Risk"
-            if device_id in parsed_known_failed_ids_wf:
-                status = "Known Failed & In At-Risk Cluster"
-            devices_to_monitor_df_data.append({"Device ID": device_id, "Status": status, "Assigned At-Risk Cluster(s)": str(clustered_df_wf.loc[device_id, 'cluster_label'])})
-
-        if devices_to_monitor_df_data:
-            devices_to_monitor_df = pd.DataFrame(devices_to_monitor_df_data).set_index("Device ID")
-            st.dataframe(devices_to_monitor_df)
-
-            # Highlight those not on the known list but in at-risk clusters
-            newly_identified_at_risk = devices_to_monitor_df[devices_to_monitor_df["Status"] == "Potentially At-Risk"]
-            if not newly_identified_at_risk.empty:
-                st.write("Newly Identified Potentially At-Risk Devices (not on your known failed list):")
-                st.dataframe(newly_identified_at_risk)
-        else:
-            st.info("No devices found in the selected at-risk clusters.")
-
-    # Add placeholders for other workflows if any
-    # elif st.session_state.selected_workflow == "Another Workflow":
-    #    st.write("Another workflow placeholder")
-
-
-# (The rest of src/main.py logic for General Analysis tabs will be added in subsequent parts)
+[end of src/main.py]

@@ -93,13 +93,29 @@ def gather_settings_for_save():
     for key, widget_key in OCSVM_PARAMS_KEYS.items():
         settings["anomaly_detection_settings"]["OneClassSVM"][key] = st.session_state.get(widget_key)
 
-    # Clustering - K-Means
-    for key, widget_key in KMEANS_PARAMS_KEYS.items():
-        settings["clustering_settings"]["KMeans"][key] = st.session_state.get(widget_key)
+    # Clustering - K-Means (Old - to be removed or adapted)
+    # for key, widget_key in KMEANS_PARAMS_KEYS.items():
+    #     settings["clustering_settings"]["KMeans"][key] = st.session_state.get(widget_key)
 
-    # Clustering - DBSCAN
-    for key, widget_key in DBSCAN_PARAMS_KEYS.items():
-        settings["clustering_settings"]["DBSCAN"][key] = st.session_state.get(widget_key)
+    # Clustering - DBSCAN (Old - to be removed or adapted)
+    # for key, widget_key in DBSCAN_PARAMS_KEYS.items():
+    #     settings["clustering_settings"]["DBSCAN"][key] = st.session_state.get(widget_key)
+
+    # New: Save clustering module parameters
+    # These are stored under a single key in session_state, e.g., 'clustering_module_params'
+    # The module_key used in main.py was "clustering_module" for its params.
+    # So, st.session_state.clustering_module_params should exist.
+    # For consistency with other settings, we might want to use a key like 'clustering_module_params_general'
+    # if the actual key in session_state is 'clustering_module_params'.
+    # Assuming st.session_state.clustering_module_params holds the dictionary from the module.
+
+    # Let's simplify and assume the key in session_state is 'clustering_module_params'
+    # and we save it directly.
+    settings["clustering_module_params"] = st.session_state.get('clustering_module_params', {})
+    # Clean up old clustering_settings if it's now empty or redundant
+    if not settings["clustering_settings"]["KMeans"] and not settings["clustering_settings"]["DBSCAN"]:
+        del settings["clustering_settings"]
+
 
     # Feature Engineering Settings
     # Using sensible defaults if keys are not in session_state, though UI should ideally set them first.
@@ -141,19 +157,36 @@ def apply_loaded_settings_to_session_state(settings_dict):
                 st.session_state[widget_key] = ocsvm_settings[key]
                 applied_keys_log.append(widget_key)
 
-        # Clustering - K-Means
-        kmeans_settings = settings_dict.get("clustering_settings", {}).get("KMeans", {})
-        for key, widget_key in KMEANS_PARAMS_KEYS.items():
-            if key in kmeans_settings and kmeans_settings[key] is not None:
-                st.session_state[widget_key] = kmeans_settings[key]
-                applied_keys_log.append(widget_key)
+        # Clustering - K-Means (Old - to be removed or adapted)
+        # kmeans_settings = settings_dict.get("clustering_settings", {}).get("KMeans", {})
+        # for key, widget_key in KMEANS_PARAMS_KEYS.items():
+        #     if key in kmeans_settings and kmeans_settings[key] is not None:
+        #         st.session_state[widget_key] = kmeans_settings[key]
+        #         applied_keys_log.append(widget_key)
 
-        # Clustering - DBSCAN
-        dbscan_settings = settings_dict.get("clustering_settings", {}).get("DBSCAN", {})
-        for key, widget_key in DBSCAN_PARAMS_KEYS.items():
-            if key in dbscan_settings and dbscan_settings[key] is not None:
-                st.session_state[widget_key] = dbscan_settings[key]
-                applied_keys_log.append(widget_key)
+        # Clustering - DBSCAN (Old - to be removed or adapted)
+        # dbscan_settings = settings_dict.get("clustering_settings", {}).get("DBSCAN", {})
+        # for key, widget_key in DBSCAN_PARAMS_KEYS.items():
+        #     if key in dbscan_settings and dbscan_settings[key] is not None:
+        #         st.session_state[widget_key] = dbscan_settings[key]
+        #         applied_keys_log.append(widget_key)
+
+        # New: Load clustering module parameters
+        # The key in the saved file is 'clustering_module_params'
+        loaded_clustering_params = settings_dict.get("clustering_module_params")
+        if loaded_clustering_params is not None: # Check if it exists in the loaded file
+            # Ensure 'clustering_module_params' exists in session_state before updating
+            if 'clustering_module_params' not in st.session_state:
+                st.session_state.clustering_module_params = {} # Initialize if not present
+
+            # Update existing keys, don't discard new keys added to the module since last save
+            for key, value in loaded_clustering_params.items():
+                if value is not None: # Avoid setting None for params that might have valid defaults
+                    st.session_state.clustering_module_params[key] = value
+            applied_keys_log.append('clustering_module_params')
+
+        # Note: The old "clustering_settings" with KMeans/DBSCAN sub-keys will now be ignored
+        # if they are present in an old config file, as we are not explicitly loading them.
 
         # Feature Engineering Settings
         fe_settings = settings_dict.get("feature_engineering_settings", {})
