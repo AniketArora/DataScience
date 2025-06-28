@@ -1172,5 +1172,3 @@ if app_mode == "Guided Workflows":
     else: st.info("Load data using the sidebar to enable general data tools.")
 
 # To run this app: streamlit run src/main.py
-
-[end of src/main.py]
