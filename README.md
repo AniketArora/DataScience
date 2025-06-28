@@ -26,3 +26,11 @@ This project aims to provide a flexible and user-friendly tool for analyzing dat
 ## Getting Started (Placeholder)
 
 (Instructions on how to set up and run the project will be added here once the initial development is complete.)
+
+## How to Launch
+
+To launch the project, ensure you have all dependencies installed from `requirements.txt` and then run the following command in your terminal:
+
+```bash
+streamlit run src/main.py
+```
