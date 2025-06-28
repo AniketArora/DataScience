@@ -31,6 +31,11 @@ DBSCAN_PARAMS_KEYS = {
     "scale_data": "scale_data_clustering_dbscan_general"
 }
 
+FEATURE_ENG_PARAMS_KEYS = {
+    "acf_lags": "fe_acf_lags_general",
+    "rolling_windows": "fe_rolling_windows_general"
+}
+
 # Helper to get nested session_state values
 def _get_nested_session_state(key_path_str, default=None):
     keys = key_path_str.split('.')
@@ -68,7 +73,8 @@ def gather_settings_for_save():
         "clustering_settings": {
             "KMeans": {},
             "DBSCAN": {}
-        }
+        },
+        "feature_engineering_settings": {} # New section
     }
 
     # Time Series Settings
@@ -110,6 +116,15 @@ def gather_settings_for_save():
     if not settings["clustering_settings"]["KMeans"] and not settings["clustering_settings"]["DBSCAN"]:
         del settings["clustering_settings"]
 
+
+    # Feature Engineering Settings
+    # Using sensible defaults if keys are not in session_state, though UI should ideally set them first.
+    settings["feature_engineering_settings"]["acf_lags"] = st.session_state.get(
+        FEATURE_ENG_PARAMS_KEYS["acf_lags"], [1, 5, 10]
+    )
+    settings["feature_engineering_settings"]["rolling_windows"] = st.session_state.get(
+        FEATURE_ENG_PARAMS_KEYS["rolling_windows"], [1, 5, 10, 20]
+    )
 
     return settings
 
@@ -172,6 +187,18 @@ def apply_loaded_settings_to_session_state(settings_dict):
 
         # Note: The old "clustering_settings" with KMeans/DBSCAN sub-keys will now be ignored
         # if they are present in an old config file, as we are not explicitly loading them.
+
+        # Feature Engineering Settings
+        fe_settings = settings_dict.get("feature_engineering_settings", {})
+        for key, widget_key in FEATURE_ENG_PARAMS_KEYS.items():
+            if key in fe_settings and fe_settings[key] is not None:
+                # Ensure lists are lists (e.g. from JSON)
+                if isinstance(fe_settings[key], list):
+                    st.session_state[widget_key] = fe_settings[key]
+                    applied_keys_log.append(widget_key)
+                else:
+                    errors_log.append(f"Invalid type for {widget_key}, expected list, got {type(fe_settings[key])}")
+
 
         if errors_log:
             return False, f"Errors applying settings for: {', '.join(errors_log)}. Applied: {', '.join(applied_keys_log)}"

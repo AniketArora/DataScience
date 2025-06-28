@@ -1,11 +1,15 @@
 import pandas as pd
 import numpy as np # Ensure numpy is imported
-import streamlit as st # Not used in functions but often included
+import streamlit as st
 from sklearn.ensemble import IsolationForest
 from sklearn.svm import OneClassSVM
 from sklearn.preprocessing import StandardScaler # Good practice for One-Class SVM
+import logging
+
+logger = logging.getLogger(__name__)
 
 
+@st.cache_data
 def detect_anomalies_zscore(series: pd.Series, threshold=3, window=None):
     """
     Detects anomalies in a time series using the Z-score method.
@@ -23,20 +27,30 @@ def detect_anomalies_zscore(series: pd.Series, threshold=3, window=None):
         str or None: An error message if detection fails.
     """
     if not isinstance(series, pd.Series):
-        return None, None, "Input is not a pandas Series."
+        msg = "Input is not a pandas Series."
+        logger.warning(msg)
+        return None, None, msg
     if series.empty:
-        return None, None, "Input series is empty."
+        msg = "Input series is empty."
+        logger.warning(msg)
+        return None, None, msg
 
     series_cleaned = series.dropna()
     if series_cleaned.empty:
-        return None, None, "Series is empty after dropping NaN values."
+        msg = "Series is empty after dropping NaN values."
+        logger.warning(msg)
+        return None, None, msg
 
     try:
         if window:
             if not isinstance(window, int) or window <= 0:
-                return None, None, "Window must be a positive integer."
+                msg = "Window must be a positive integer."
+                logger.warning(msg)
+                return None, None, msg
             if window >= len(series_cleaned):
-                 return None, None, f"Window size ({window}) is too large for the series length ({len(series_cleaned)})."
+                 msg = f"Window size ({window}) is too large for the series length ({len(series_cleaned)})."
+                 logger.warning(msg)
+                 return None, None, msg
 
             rolling_mean = series_cleaned.rolling(window=window, center=True, min_periods=1).mean()
             rolling_std = series_cleaned.rolling(window=window, center=True, min_periods=1).std()
@@ -62,9 +76,11 @@ def detect_anomalies_zscore(series: pd.Series, threshold=3, window=None):
 
         return anomalies_reindexed, z_scores_reindexed, None
     except Exception as e:
+        logger.error("Z-score anomaly detection failed for series %s: %s", series.name if series.name else "Unnamed", e, exc_info=True)
         return None, None, f"Z-score anomaly detection failed: {e}"
 
 
+@st.cache_data
 def detect_anomalies_iqr(series: pd.Series, multiplier=1.5):
     """
     Detects anomalies in a time series using the Interquartile Range (IQR) method.
@@ -80,13 +96,19 @@ def detect_anomalies_iqr(series: pd.Series, multiplier=1.5):
         str or None: An error message if detection fails.
     """
     if not isinstance(series, pd.Series):
-        return None, None, "Input is not a pandas Series."
+        msg = "Input is not a pandas Series."
+        logger.warning(msg)
+        return None, None, msg
     if series.empty:
-        return None, None, "Input series is empty."
+        msg = "Input series is empty."
+        logger.warning(msg)
+        return None, None, msg
 
     series_cleaned = series.dropna()
     if series_cleaned.empty:
-        return None, None, "Series is empty after dropping NaN values."
+        msg = "Series is empty after dropping NaN values."
+        logger.warning(msg)
+        return None, None, msg
 
     try:
         Q1 = series_cleaned.quantile(0.25)
@@ -107,10 +129,12 @@ def detect_anomalies_iqr(series: pd.Series, multiplier=1.5):
 
         return anomalies_reindexed, bounds_info, None
     except Exception as e:
+        logger.error("IQR anomaly detection failed for series %s: %s", series.name if series.name else "Unnamed", e, exc_info=True)
         return None, None, f"IQR anomaly detection failed: {e}"
 
 # --- New ML-based Anomaly Detection Functions ---
 
+@st.cache_data
 def detect_anomalies_isolation_forest(feature_df: pd.DataFrame, contamination='auto', random_state=42, **kwargs):
     """
     Detects anomalies in a DataFrame of device features using Isolation Forest.
@@ -129,11 +153,17 @@ def detect_anomalies_isolation_forest(feature_df: pd.DataFrame, contamination='a
         str or None: An error message if detection fails.
     """
     if not isinstance(feature_df, pd.DataFrame):
-        return None, None, "Input is not a pandas DataFrame."
+        msg = "Input is not a pandas DataFrame."
+        logger.warning(msg)
+        return None, None, msg
     if feature_df.empty:
-        return None, None, "Input DataFrame is empty."
+        msg = "Input DataFrame is empty."
+        logger.warning(msg)
+        return None, None, msg
     if feature_df.isnull().any().any(): # Check for any NaNs in the entire DataFrame
-        return None, None, "Input DataFrame contains NaN values. Please handle them before anomaly detection."
+        msg = "Input DataFrame contains NaN values. Please handle them before anomaly detection."
+        logger.warning(msg)
+        return None, None, msg
 
     try:
         model = IsolationForest(contamination=contamination, random_state=random_state, **kwargs)
@@ -144,8 +174,10 @@ def detect_anomalies_isolation_forest(feature_df: pd.DataFrame, contamination='a
 
         return labels, scores, None
     except Exception as e:
+        logger.error("Isolation Forest anomaly detection failed: %s", e, exc_info=True)
         return None, None, f"Isolation Forest anomaly detection failed: {e}"
 
+@st.cache_data
 def detect_anomalies_one_class_svm(feature_df: pd.DataFrame, nu=0.05, kernel="rbf", gamma='scale', **kwargs):
     """
     Detects anomalies in a DataFrame of device features using One-Class SVM.
@@ -165,11 +197,17 @@ def detect_anomalies_one_class_svm(feature_df: pd.DataFrame, nu=0.05, kernel="rb
         str or None: An error message if detection fails.
     """
     if not isinstance(feature_df, pd.DataFrame):
-        return None, None, "Input is not a pandas DataFrame."
+        msg = "Input is not a pandas DataFrame."
+        logger.warning(msg)
+        return None, None, msg
     if feature_df.empty:
-        return None, None, "Input DataFrame is empty."
+        msg = "Input DataFrame is empty."
+        logger.warning(msg)
+        return None, None, msg
     if feature_df.isnull().any().any():
-        return None, None, "Input DataFrame contains NaN values. Please handle them before anomaly detection."
+        msg = "Input DataFrame contains NaN values. Please handle them before anomaly detection."
+        logger.warning(msg)
+        return None, None, msg
 
     try:
         # Scale features - important for SVM
@@ -185,6 +223,7 @@ def detect_anomalies_one_class_svm(feature_df: pd.DataFrame, nu=0.05, kernel="rb
 
         return labels, scores, None
     except Exception as e:
+        logger.error("One-Class SVM anomaly detection failed: %s", e, exc_info=True)
         return None, None, f"One-Class SVM anomaly detection failed: {e}"
 
 # --- Analysis Module Interface Implementation ---

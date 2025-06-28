@@ -1,115 +1,118 @@
-import streamlit as st
-import pandas as pd
 import psycopg2
-from elasticsearch import Elasticsearch
-from elasticsearch.helpers import scan # Added scan import
+import pandas as pd
+import streamlit as st
+import logging
 
-# --- PostgreSQL Connection ---
-def connect_postgres(host, port, dbname, user, password):
-    """Connects to a PostgreSQL database and returns a connection object."""
+logger = logging.getLogger(__name__)
+
+@st.cache_resource(max_entries=5)
+def connect_postgres(db_config: dict) -> tuple[psycopg2.extensions.connection | None, str | None]:
+    """
+    Connects to a PostgreSQL database.
+
+    Args:
+        db_config: A dictionary with connection parameters (host, port, dbname, user, password).
+
+    Returns:
+        A tuple containing the connection object and None on success,
+        or None and an error message on failure.
+    """
     try:
-        conn = psycopg2.connect(
-            host=host,
-            port=port,
-            dbname=dbname,
-            user=user,
-            password=password
-        )
-        return conn
+        conn = psycopg2.connect(**db_config)
+        return conn, None
     except psycopg2.Error as e:
-        st.error(f"Error connecting to PostgreSQL: {e}")
-        return None
+        logger.error("Error connecting to PostgreSQL: %s", e, exc_info=True)
+        return None, f"Error connecting to PostgreSQL: {e}"
 
-def fetch_postgres_data(conn, query):
-    """Fetches data from PostgreSQL using the provided connection and query."""
+@st.cache_data(max_entries=10)
+def get_schemas_postgres(conn: psycopg2.extensions.connection) -> tuple[list[str] | None, str | None]:
+    """
+    Retrieves a list of schema names from the PostgreSQL database.
+
+    Args:
+        conn: A psycopg2 connection object.
+
+    Returns:
+        A tuple containing a list of schema names and None on success,
+        or None and an error message on failure.
+    """
+    if not conn:
+        return None, "No database connection provided."
     try:
-        df = pd.read_sql_query(query, conn)
-        return df
-    except Exception as e:
-        st.error(f"Error fetching data from PostgreSQL: {e}")
-        return pd.DataFrame() # Return empty DataFrame on error
+        with conn.cursor() as cur:
+            cur.execute("SELECT schema_name FROM information_schema.schemata;")
+            schemas = [row[0] for row in cur.fetchall()]
+        return schemas, None
+    except psycopg2.Error as e:
+        logger.error("Error retrieving schemas: %s", e, exc_info=True)
+        return None, f"Error retrieving schemas: {e}"
 
-# --- Elasticsearch Connection ---
-def connect_elasticsearch(hosts):
+@st.cache_data(max_entries=10)
+def get_tables_postgres(conn: psycopg2.extensions.connection, schema_name: str) -> tuple[list[str] | None, str | None]:
     """
-    Connects to an Elasticsearch cluster via a list of host URLs.
+    Retrieves a list of table names from a specific schema in the PostgreSQL database.
+
+    Args:
+        conn: A psycopg2 connection object.
+        schema_name: The name of the schema.
+
+    Returns:
+        A tuple containing a list of table names and None on success,
+        or None and an error message on failure.
     """
+    if not conn:
+        return None, "No database connection provided."
+    if not schema_name or not isinstance(schema_name, str):
+        return None, "Invalid schema name provided."
     try:
-        if not hosts:
-            st.error("Elasticsearch connection requires host URL(s).")
-            return None
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = %s;",
+                (schema_name,),
+            )
+            tables = [row[0] for row in cur.fetchall()]
+        return tables, None
+    except psycopg2.Error as e:
+        logger.error("Error retrieving tables for schema '%s': %s", schema_name, e, exc_info=True)
+        return None, f"Error retrieving tables for schema '{schema_name}': {e}"
 
-        es = Elasticsearch(hosts)
-
-        if es.ping():
-            st.success("Successfully connected to Elasticsearch!")
-            return es
-        else:
-            st.error("Failed to ping Elasticsearch. Check connection details.")
-            return None
-    except Exception as e:
-        st.error(f"Error connecting to Elasticsearch: {e}")
-        return None
-
-def fetch_elasticsearch_data(es_conn, index_name, query_body=None):
+@st.cache_data(max_entries=10)
+def fetch_data_postgres(
+    conn: psycopg2.extensions.connection, schema_name: str, table_name: str, limit: int | None = None
+) -> tuple[pd.DataFrame | None, str | None]:
     """
-    Fetches data from Elasticsearch using the helpers.scan utility for efficiency.
-    If query_body is None, it fetches all documents.
+    Fetches data from a table in a specific schema in the PostgreSQL database.
+
+    Args:
+        conn: A psycopg2 connection object.
+        schema_name: The name of the schema.
+        table_name: The name of the table.
+        limit: Optional limit for the number of rows to fetch.
+
+    Returns:
+        A tuple containing a Pandas DataFrame with the table data and None on success,
+        or None and an error message on failure.
     """
-    if not es_conn:
-        return pd.DataFrame()
+    if not conn:
+        return None, "No database connection provided."
+    if not schema_name or not isinstance(schema_name, str):
+        return None, "Invalid schema name provided."
+    if not table_name or not isinstance(table_name, str):
+        return None, "Invalid table name provided."
 
-    if query_body is None:
-        query_body = {"query": {"match_all": {}}}
-
-    documents = []
     try:
-        # scan is a generator, iterate through it to get all documents
-        for hit in scan(client=es_conn, index=index_name, query=query_body):
-            documents.append(hit['_source'])
-
-        if not documents:
-            st.warning(f"No documents found in index '{index_name}' for the given query using scan.")
-            return pd.DataFrame()
-
-        df = pd.DataFrame(documents)
-        return df
-    except Exception as e:
-        # More specific exception handling for scan errors might be useful if identifiable
-        st.error(f"Error fetching data from Elasticsearch index '{index_name}' using scan: {e}")
-        return pd.DataFrame()
-
-if __name__ == '__main__':
-    # Example Usage (primarily for testing purposes, not part of the Streamlit app flow)
-
-    # --- PostgreSQL Example (requires a running PostgreSQL instance) ---
-    # print("Testing PostgreSQL connection...")
-    # pg_conn = connect_postgres("localhost", "5432", "mydatabase", "myuser", "mypassword")
-    # if pg_conn:
-    #     print("PostgreSQL connection successful.")
-    #     # Example: list tables (adjust query for your DB)
-    #     # df_tables = fetch_postgres_data(pg_conn, "SELECT table_name FROM information_schema.tables WHERE table_schema='public';")
-    #     # print("Tables:", df_tables)
-    #     pg_conn.close()
-    # else:
-    #     print("PostgreSQL connection failed.")
-
-    # --- Elasticsearch Example (requires a running Elasticsearch instance) ---
-    # print("\nTesting Elasticsearch connection...")
-    # # Option 1: Elastic Cloud (replace with your cloud_id and api_key)
-    # # es_instance = connect_elasticsearch(cloud_id="YOUR_CLOUD_ID", api_key=("YOUR_API_KEY_ID", "YOUR_API_KEY"))
-
-    # # Option 2: Self-managed (replace with your host)
-    # es_instance = connect_elasticsearch(hosts=["http://localhost:9200"])
-
-    # if es_instance:
-    #     print("Elasticsearch connection successful.")
-    #     # Example: fetch data from an index (replace 'my_index' with your index name)
-    #     # df_es_data = fetch_elasticsearch_data(es_instance, "my_index")
-    #     # if not df_es_data.empty:
-    #     #     print(f"Data from Elasticsearch index 'my_index':\n{df_es_data.head()}")
-    #     # else:
-    #     #     print(f"No data found or error fetching from 'my_index'.")
-    # else:
-    #     print("Elasticsearch connection failed.")
-    pass
+        with conn.cursor() as cur:
+            query = f'SELECT * FROM "{schema_name}"."{table_name}"'
+            if limit is not None:
+                if not isinstance(limit, int) or limit < 0:
+                    return None, "Invalid limit provided. Limit must be a non-negative integer."
+                query += f" LIMIT {limit}"
+            query += ";"
+            cur.execute(query)
+            colnames = [desc[0] for desc in cur.description]
+            data = cur.fetchall()
+            df = pd.DataFrame(data, columns=colnames)
+        return df, None
+    except psycopg2.Error as e:
+        logger.error("Error fetching data from table '%s.%s': %s", schema_name, table_name, e, exc_info=True)
+        return None, f"Error fetching data from table '{schema_name}.{table_name}': {e}"
