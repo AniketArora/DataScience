@@ -939,7 +939,11 @@ if app_mode == "Guided Workflows":
                     # Removed individual save/load placeholder for Isolation Forest
                     if st.button("Run Isolation Forest", key="run_if_pop_general"):
                         labels, scores, error_msg = detect_anomalies_isolation_forest(features_df_cleaned, contamination=contam_if)
-                        if error_msg: st.error(error_msg); else: st.session_state.population_anomaly_results = {'method':'Isolation Forest', 'labels':labels, 'scores':scores}; st.success("IForest complete.")
+                        if error_msg:
+                            st.error(error_msg)
+                        else:
+                            st.session_state.population_anomaly_results = {'method':'Isolation Forest', 'labels':labels, 'scores':scores}
+                            st.success("IForest complete.")
                 elif anomaly_method_pop == "One-Class SVM":
                     nu_ocsvm = st.slider("Nu", 0.01, 0.5, 0.05, 0.01, key="ocsvm_nu_general"); kernel_ocsvm = st.selectbox("Kernel", ["rbf", "linear", "poly", "sigmoid"], key="ocsvm_kernel_general"); gamma_ocsvm_text = st.text_input("Gamma", value='scale', key="ocsvm_gamma_general");
                     try: gamma_val = float(gamma_ocsvm_text)
@@ -947,7 +951,11 @@ if app_mode == "Guided Workflows":
                     # Removed individual save/load placeholder for One-Class SVM
                     if st.button("Run One-Class SVM", key="run_ocsvm_pop_general"):
                         labels, scores, error_msg = detect_anomalies_one_class_svm(features_df_cleaned, nu=nu_ocsvm, kernel=kernel_ocsvm, gamma=gamma_val)
-                        if error_msg: st.error(error_msg); else: st.session_state.population_anomaly_results = {'method':'One-Class SVM', 'labels':labels, 'scores':scores}; st.success("OC-SVM complete.")
+                        if error_msg:
+                            st.error(error_msg)
+                        else:
+                            st.session_state.population_anomaly_results = {'method':'One-Class SVM', 'labels':labels, 'scores':scores}
+                            st.success("OC-SVM complete.")
                 pop_results = st.session_state.get('population_anomaly_results')
                 if pop_results and 'labels' in pop_results:
                     st.write(f"Results: {pop_results['method']}"); res_df = pd.DataFrame({'label':pop_results['labels'], 'score':pop_results['scores']}).sort_values(by='score'); st.session_state.res_df_anomalies_sorted = res_df
@@ -1037,15 +1045,23 @@ if app_mode == "Guided Workflows":
                     k_final = st.number_input("Num Clusters (K)", 2, len(features_df_cleaned)-1 if len(features_df_cleaned)>2 else 2, 3, key="km_k_final_general");
                 # Removed individual save/load placeholder
                     if st.button("Run K-Means", key="run_km_pop_btn_general"):
-                    labels, model, err_msg = perform_kmeans_clustering(features_df_cleaned, n_clusters=k_final, scale_data=scale_data_kmeans_specific) # Use specific scale
-                        if err_msg: st.error(err_msg); else: st.session_state.clustering_results = {'method':'K-Means', 'labels':labels, 'model':model, 'k':k_final}; st.success(f"K-Means complete (K={k_final}).")
+                        labels, model, err_msg = perform_kmeans_clustering(features_df_cleaned, n_clusters=k_final, scale_data=scale_data_kmeans_specific) # Use specific scale
+                        if err_msg:
+                            st.error(err_msg)
+                        else:
+                            st.session_state.clustering_results = {'method':'K-Means', 'labels':labels, 'model':model, 'k':k_final}
+                            st.success(f"K-Means complete (K={k_final}).")
                 elif cluster_method == "DBSCAN":
                 scale_data_dbscan_specific = st.checkbox("Scale data before DBSCAN", value=True, key="scale_data_clustering_dbscan_general")
                     eps_dbscan = st.number_input("Epsilon", 0.01, 10.0, 0.5, 0.01, key="db_eps_general"); min_samples_dbscan = st.number_input("Min Samples", 1, 100, 5, 1, key="db_min_samples_general")
                 # Removed individual save/load placeholder
                     if st.button("Run DBSCAN", key="run_db_pop_btn_general"):
-                    labels, model, err_msg = perform_dbscan_clustering(features_df_cleaned, eps=eps_dbscan, min_samples=min_samples_dbscan, scale_data=scale_data_dbscan_specific) # Use specific scale
-                        if err_msg: st.error(err_msg); else: st.session_state.clustering_results = {'method':'DBSCAN', 'labels':labels, 'model':model}; st.success("DBSCAN complete.")
+                        labels, model, err_msg = perform_dbscan_clustering(features_df_cleaned, eps=eps_dbscan, min_samples=min_samples_dbscan, scale_data=scale_data_dbscan_specific) # Use specific scale
+                        if err_msg:
+                            st.error(err_msg)
+                        else:
+                            st.session_state.clustering_results = {'method':'DBSCAN', 'labels':labels, 'model':model}
+                            st.success("DBSCAN complete.")
                 clust_results = st.session_state.get('clustering_results')
                 if clust_results and 'labels' in clust_results:
                     st.write(f"Results: {clust_results['method']}"); clust_summary = clust_results['labels'].value_counts().rename("Device Count").to_frame(); st.dataframe(clust_summary)
