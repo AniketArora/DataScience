@@ -14,6 +14,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.info("Universal Data Analyzer application started.")
 
+# --- Global Constants / Configs ---
+TEMP_ID_COL_NAME = "_temp_unique_id_" # Define temp_id_col_name globally
 
 # --- Utility / Helper Functions (e.g., config_utils if not separate) ---
 
@@ -147,12 +149,12 @@ if 'surrogate_tree_explainer' not in st.session_state: st.session_state.surrogat
 
 # --- Utility for resetting states ---
 def reset_ts_and_temp_cols():
-    temp_id_col_name = "_temp_unique_id_"
-    if temp_id_col_name in st.session_state.data_df_original.columns:
-        try: del st.session_state.data_df_original[temp_id_col_name]
+    # temp_id_col_name is now global (TEMP_ID_COL_NAME)
+    if TEMP_ID_COL_NAME in st.session_state.data_df_original.columns:
+        try: del st.session_state.data_df_original[TEMP_ID_COL_NAME]
         except KeyError: pass
-    if temp_id_col_name in st.session_state.data_df.columns:
-         try: del st.session_state.data_df[temp_id_col_name]
+    if TEMP_ID_COL_NAME in st.session_state.data_df.columns:
+         try: del st.session_state.data_df[TEMP_ID_COL_NAME]
          except KeyError: pass
     st.session_state.time_series_specs = {"id_cols": [], "timestamp_col": "None", "value_cols": [], "selected_id": "None", "selected_value_col_for_analysis": "None", "processed_series": None}
     st.session_state.active_filters = {}
@@ -225,9 +227,9 @@ if app_mode == "Guided Workflows":
         devices_in_at_risk_clusters_wf = cluster_labels_series_wf[cluster_labels_series_wf.isin(selected_at_risk_clusters_wf)].index.tolist()
         if not devices_in_at_risk_clusters_wf: st.info("No devices in selected cluster(s).")
         else:
-            st.session_state.db_conn = conn
-            st.sidebar.success("Successfully connected to PostgreSQL!")
-            logger.info("PostgreSQL connection successful.")
+            # st.session_state.db_conn = conn # conn is not defined here, commenting out
+            st.sidebar.warning("DB connection for Guided Workflows needs setup (conn variable).")
+            # logger.info("PostgreSQL connection successful.") # Only log if connection attempt is made
             # Fetch schemas immediately after successful connection
             schemas, err_schemas = get_schemas_postgres(st.session_state.db_conn)
             if err_schemas:
@@ -551,11 +553,11 @@ if app_mode == "Guided Workflows":
             # Prepare data for the executor
             data_df_original_serializable = st.session_state.data_df_original.copy()
             ts_specs_serializable = st.session_state.time_series_specs.copy()
-        # Add parsed ACF lags and Rolling Windows to ts_specs_serializable
-        ts_specs_serializable['acf_lags'] = st.session_state.fe_acf_lags_general
-        ts_specs_serializable['rolling_windows'] = st.session_state.fe_rolling_windows_general
+            # Add parsed ACF lags and Rolling Windows to ts_specs_serializable
+            ts_specs_serializable['acf_lags'] = st.session_state.fe_acf_lags_general
+            ts_specs_serializable['rolling_windows'] = st.session_state.fe_rolling_windows_general
 
-            # Corrected indentation for the following block
+            # Corrected indentation for this block
             event_df_serializable = st.session_state.event_df.copy()
             global_top_event_types_cleaned_serializable = list(st.session_state.get("global_top_event_types_cleaned", []))
 
@@ -568,7 +570,7 @@ if app_mode == "Guided Workflows":
                     event_df_serializable,
                     global_top_event_types_cleaned_serializable
                 )
-                executor.shutdown(wait=False) # Ensure this is at the correct indentation
+                executor.shutdown(wait=False)
                 st.sidebar.info("Feature computation started in the background.")
                 logger.info("Background feature computation task submitted with ACF Lags: %s, Rolling Windows: %s",
                             st.session_state.fe_acf_lags_general, st.session_state.fe_rolling_windows_general)
@@ -636,12 +638,12 @@ if app_mode == "Guided Workflows":
             st.sidebar.error(f"Error parsing settings file: {e}")
 
     # This needs to be structured correctly: the following elif and else are for the "if not st.session_state.data_df_original.empty:" block
-    elif not st.session_state.data_df_original.empty and temp_id_col_name in st.session_state.data_df_original.columns:
+    elif not st.session_state.data_df_original.empty and TEMP_ID_COL_NAME in st.session_state.data_df_original.columns: # Use global TEMP_ID_COL_NAME
          if (st.session_state.time_series_specs.get("timestamp_col","None")=="None" or not st.session_state.time_series_specs.get("value_cols",[])):
-                try: del st.session_state.data_df_original[temp_id_col_name]
+                try: del st.session_state.data_df_original[TEMP_ID_COL_NAME] # Use global TEMP_ID_COL_NAME
                 except KeyError:pass
-                if temp_id_col_name in st.session_state.data_df.columns:
-                    try: del st.session_state.data_df[temp_id_col_name]
+                if TEMP_ID_COL_NAME in st.session_state.data_df.columns: # Use global TEMP_ID_COL_NAME
+                    try: del st.session_state.data_df[TEMP_ID_COL_NAME] # Use global TEMP_ID_COL_NAME
                     except KeyError:pass
     else: st.sidebar.info("Load data for TS settings.")
     st.sidebar.markdown("---"); st.sidebar.header("Population Analysis Settings")
@@ -1000,18 +1002,19 @@ if app_mode == "Guided Workflows":
                     if event_cols_in_features_df_anom: # Check if any event count features exist
                         st.markdown("---")
                         st.subheader("Event Correlations with Anomalies")
-                        event_corr_anom_df, error_eca = analyze_event_correlations(
-                            features_df_cleaned,
-                            pop_results["labels"], # current_anomaly_labels
-                            event_feature_prefix=f"{st.session_state.time_series_specs.get('selected_value_col_for_analysis', 'value')}_evt_count_" # Ensure correct prefix
-                        )
-                        if error_eca:
-                            st.error(f"Error analyzing event correlations for anomalies: {error_eca}")
-                        elif event_corr_anom_df is not None and not event_corr_anom_df.empty:
-                            st.write("Mean Event Counts (Anomalous vs. Normal Devices vs. Overall):")
-                            st.dataframe(event_corr_anom_df)
-                        else:
-                            st.info("No event correlation data to display for anomalies or no event count features found matching the prefix.")
+                        st.warning("Event correlation analysis for anomalies is temporarily disabled (analyze_event_correlations function not found).")
+                        # event_corr_anom_df, error_eca = analyze_event_correlations(
+                        #     features_df_cleaned,
+                        #     pop_results["labels"], # current_anomaly_labels
+                        #     event_feature_prefix=f"{st.session_state.time_series_specs.get('selected_value_col_for_analysis', 'value')}_evt_count_" # Ensure correct prefix
+                        # )
+                        # if error_eca:
+                        #     st.error(f"Error analyzing event correlations for anomalies: {error_eca}")
+                        # elif event_corr_anom_df is not None and not event_corr_anom_df.empty:
+                        #     st.write("Mean Event Counts (Anomalous vs. Normal Devices vs. Overall):")
+                        #     st.dataframe(event_corr_anom_df)
+                        # else:
+                        #     st.info("No event correlation data to display for anomalies or no event count features found matching the prefix.")
                     # else: st.info("No event count features found in the dataset for anomaly correlation.") # Optional message
 
             with tab_pop_clustering:
@@ -1076,18 +1079,19 @@ if app_mode == "Guided Workflows":
                     if event_cols_in_features_df_clust:
                         st.markdown("---")
                         st.subheader("Event Correlations with Clusters")
-                        event_corr_clust_df, error_ecc = analyze_event_correlations(
-                            features_df_cleaned,
-                            clust_results["labels"], # current_cluster_labels
-                            event_feature_prefix=f"{st.session_state.time_series_specs.get('selected_value_col_for_analysis', 'value')}_evt_count_"
-                        )
-                        if error_ecc:
-                            st.error(f"Error analyzing event correlations for clusters: {error_ecc}")
-                        elif event_corr_clust_df is not None and not event_corr_clust_df.empty:
-                            st.write("Mean Event Counts per Cluster (vs. Overall):")
-                            st.dataframe(event_corr_clust_df)
-                        else:
-                            st.info("No event correlation data to display for clusters or no event count features found matching the prefix.")
+                        st.warning("Event correlation analysis for clusters is temporarily disabled (analyze_event_correlations function not found).")
+                        # event_corr_clust_df, error_ecc = analyze_event_correlations(
+                        #     features_df_cleaned,
+                        #     clust_results["labels"], # current_cluster_labels
+                        #     event_feature_prefix=f"{st.session_state.time_series_specs.get('selected_value_col_for_analysis', 'value')}_evt_count_"
+                        # )
+                        # if error_ecc:
+                        #     st.error(f"Error analyzing event correlations for clusters: {error_ecc}")
+                        # elif event_corr_clust_df is not None and not event_corr_clust_df.empty:
+                        #     st.write("Mean Event Counts per Cluster (vs. Overall):")
+                        #     st.dataframe(event_corr_clust_df)
+                        # else:
+                        #     st.info("No event correlation data to display for clusters or no event count features found matching the prefix.")
                     # else: st.info("No event count features found in the dataset for cluster correlation.") # Optional
 
                     if not features_df_cleaned.empty: # This is for the feature distribution plot by cluster
