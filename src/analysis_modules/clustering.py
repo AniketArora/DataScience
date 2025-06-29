@@ -257,3 +257,158 @@ if __name__ == '__main__':
     print(f"DBSCAN on empty: {err_db_empty}")
     _, _, err_db_nan = perform_dbscan_clustering(nan_df)
     print(f"DBSCAN on NaN df: {err_db_nan}")
+
+
+from src.interfaces import AnalysisModuleInterface # Ensure this import is present
+from typing import Any, Dict, Tuple, Optional # For type hinting
+
+class ClusteringAnalysisModule(AnalysisModuleInterface):
+    """
+    Analysis module for performing device behavior clustering.
+    """
+
+    def get_name(self) -> str:
+        return "Device Behavior Clustering"
+
+    def get_description(self) -> str:
+        return "Performs K-Means or DBSCAN clustering on device features to identify groups of similar behavior."
+
+    def get_parameter_definitions(self) -> Dict[str, Dict[str, Any]]:
+        # These would be parameters for K-Means and DBSCAN, selected via UI
+        return {
+            "method": {"type": "selectbox", "default": "K-Means", "label": "Clustering Method", "options": ["K-Means", "DBSCAN"], "help": "Select the clustering algorithm."},
+            "n_clusters": {"type": "int", "default": 3, "label": "Number of Clusters (K-Means)", "min_value": 2, "help": "Number of clusters for K-Means."},
+            "scale_data_kmeans": {"type": "checkbox", "default": True, "label": "Scale Data (K-Means)", "help": "Scale data before K-Means clustering."},
+            "eps": {"type": "float", "default": 0.5, "label": "Epsilon (DBSCAN)", "min_value": 0.01, "format": "%.2f", "help": "DBSCAN eps parameter."},
+            "min_samples": {"type": "int", "default": 5, "label": "Min Samples (DBSCAN)", "min_value": 1, "help": "DBSCAN min_samples parameter."},
+            "scale_data_dbscan": {"type": "checkbox", "default": True, "label": "Scale Data (DBSCAN)", "help": "Scale data before DBSCAN clustering."}
+            # Potentially add k_range for elbow plot, random_state etc.
+        }
+
+    def render_parameters_ui(self, st_object: Any, current_values: Dict[str, Any], module_key: str) -> Dict[str, Any]:
+        # In a real scenario, this would render Streamlit widgets
+        # For now, just return current_values or defaults to satisfy interface
+        # This part is heavily UI dependent and would be built out in main.py or similar
+        st_object.warning(f"{self.get_name()}: UI rendering for parameters is not fully implemented in this module stub.")
+
+        updated_values = {}
+        defs = self.get_parameter_definitions()
+
+        # Example of how one might render:
+        updated_values["method"] = st_object.selectbox(
+            defs["method"]["label"],
+            options=defs["method"]["options"],
+            index=defs["method"]["options"].index(current_values.get("method", defs["method"]["default"])),
+            key=f"{module_key}_method",
+            help=defs["method"]["help"]
+        )
+
+        if updated_values["method"] == "K-Means":
+            updated_values["n_clusters"] = st_object.number_input(
+                defs["n_clusters"]["label"],
+                min_value=defs["n_clusters"]["min_value"],
+                value=current_values.get("n_clusters", defs["n_clusters"]["default"]),
+                key=f"{module_key}_n_clusters",
+                help=defs["n_clusters"]["help"]
+            )
+            updated_values["scale_data_kmeans"] = st_object.checkbox(
+                defs["scale_data_kmeans"]["label"],
+                value=current_values.get("scale_data_kmeans", defs["scale_data_kmeans"]["default"]),
+                key=f"{module_key}_scale_data_kmeans",
+                help=defs["scale_data_kmeans"]["help"]
+            )
+        elif updated_values["method"] == "DBSCAN":
+            updated_values["eps"] = st_object.number_input(
+                defs["eps"]["label"],
+                min_value=defs["eps"]["min_value"],
+                value=current_values.get("eps", defs["eps"]["default"]),
+                format=defs["eps"]["format"],
+                key=f"{module_key}_eps",
+                help=defs["eps"]["help"]
+            )
+            updated_values["min_samples"] = st_object.number_input(
+                defs["min_samples"]["label"],
+                min_value=defs["min_samples"]["min_value"],
+                value=current_values.get("min_samples", defs["min_samples"]["default"]),
+                key=f"{module_key}_min_samples",
+                help=defs["min_samples"]["help"]
+            )
+            updated_values["scale_data_dbscan"] = st_object.checkbox(
+                defs["scale_data_dbscan"]["label"],
+                value=current_values.get("scale_data_dbscan", defs["scale_data_dbscan"]["default"]),
+                key=f"{module_key}_scale_data_dbscan",
+                help=defs["scale_data_dbscan"]["help"]
+            )
+        return updated_values
+
+
+    def run_analysis(self, data: pd.DataFrame, params: Dict[str, Any], session_state: Dict[str, Any]) -> Tuple[Any, Optional[str]]:
+        logger.info(f"Running {self.get_name()} with method {params.get('method')}")
+        method = params.get("method", "K-Means")
+
+        results = {}
+        error_msg = None
+
+        if data.empty:
+            return None, "Input data is empty."
+        if data.isnull().any().any():
+            return None, "Input data contains NaN values. Please clean data before clustering."
+
+        try:
+            if method == "K-Means":
+                n_clusters = params.get("n_clusters", 3)
+                scale = params.get("scale_data_kmeans", True)
+                labels, model, err = perform_kmeans_clustering(data, n_clusters=n_clusters, scale_data=scale)
+                if err:
+                    error_msg = f"K-Means error: {err}"
+                else:
+                    results = {'method': 'K-Means', 'labels': labels, 'model': model, 'k': n_clusters}
+            elif method == "DBSCAN":
+                eps = params.get("eps", 0.5)
+                min_samples = params.get("min_samples", 5)
+                scale = params.get("scale_data_dbscan", True)
+                labels, model, err = perform_dbscan_clustering(data, eps=eps, min_samples=min_samples, scale_data=scale)
+                if err:
+                    error_msg = f"DBSCAN error: {err}"
+                else:
+                    results = {'method': 'DBSCAN', 'labels': labels, 'model': model}
+            else:
+                error_msg = f"Unsupported clustering method: {method}"
+
+            if error_msg:
+                logger.error(f"Clustering analysis failed: {error_msg}")
+                return None, error_msg
+
+            logger.info(f"{method} clustering complete. Found {len(np.unique(results.get('labels', [])))} clusters/groups.")
+            return results, None
+
+        except Exception as e:
+            logger.error(f"Exception in {self.get_name()}: {e}", exc_info=True)
+            return None, f"An unexpected error occurred: {str(e)}"
+
+
+    def render_results(self, st_object: Any, results: Any, session_state: Dict[str, Any]) -> None:
+        # In a real scenario, this would render Streamlit charts/tables for the results
+        # This part is heavily UI dependent and would be built out in main.py or similar
+        st_object.write(f"Results for {self.get_name()}:")
+        if results:
+            st_object.write(f"Method: {results.get('method')}")
+            labels = results.get('labels')
+            if labels is not None:
+                st_object.write("Cluster counts:")
+                st_object.dataframe(labels.value_counts().rename("Device Count").to_frame())
+            if results.get('method') == 'K-Means' and results.get('model'):
+                try:
+                    # features_df_cleaned is needed for cluster centers if data was scaled
+                    # This assumes all_device_features_df is available and was the input to run_analysis
+                    # This part might be tricky if the 'data' passed to run_analysis was already scaled
+                    # or if the columns are not directly available.
+                    # For simplicity, this might need to be handled in main.py where features_df_cleaned is defined.
+                    # st_object.write("Cluster Centers (if applicable and data was scaled, interpretation needs original feature names):")
+                    # centers_df = pd.DataFrame(results['model'].cluster_centers_, columns=session_state.get('all_device_features_df', pd.DataFrame()).columns) # This is a guess
+                    # st_object.dataframe(centers_df)
+                    st_object.info("Cluster centers visualization would require access to feature names used for clustering.")
+                except Exception as e:
+                    st_object.warning(f"Could not display cluster centers: {e}")
+        else:
+            st_object.info("No clustering results to display.")

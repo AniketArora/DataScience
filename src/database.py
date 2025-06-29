@@ -2,11 +2,12 @@ import psycopg2
 import pandas as pd
 import streamlit as st
 import logging
+from typing import Optional, List, Tuple, Union # Added for type hinting
 
 logger = logging.getLogger(__name__)
 
 @st.cache_resource(max_entries=5)
-def connect_postgres(db_config: dict) -> tuple[psycopg2.extensions.connection | None, str | None]:
+def connect_postgres(db_config: dict) -> Tuple[Optional[psycopg2.extensions.connection], Optional[str]]:
     """
     Connects to a PostgreSQL database.
 
@@ -25,7 +26,7 @@ def connect_postgres(db_config: dict) -> tuple[psycopg2.extensions.connection | 
         return None, f"Error connecting to PostgreSQL: {e}"
 
 @st.cache_data(max_entries=10)
-def get_schemas_postgres(conn: psycopg2.extensions.connection) -> tuple[list[str] | None, str | None]:
+def get_schemas_postgres(conn: psycopg2.extensions.connection) -> Tuple[Optional[List[str]], Optional[str]]:
     """
     Retrieves a list of schema names from the PostgreSQL database.
 
@@ -48,7 +49,7 @@ def get_schemas_postgres(conn: psycopg2.extensions.connection) -> tuple[list[str
         return None, f"Error retrieving schemas: {e}"
 
 @st.cache_data(max_entries=10)
-def get_tables_postgres(conn: psycopg2.extensions.connection, schema_name: str) -> tuple[list[str] | None, str | None]:
+def get_tables_postgres(conn: psycopg2.extensions.connection, schema_name: str) -> Tuple[Optional[List[str]], Optional[str]]:
     """
     Retrieves a list of table names from a specific schema in the PostgreSQL database.
 
@@ -78,8 +79,8 @@ def get_tables_postgres(conn: psycopg2.extensions.connection, schema_name: str) 
 
 @st.cache_data(max_entries=10)
 def fetch_data_postgres(
-    conn: psycopg2.extensions.connection, schema_name: str, table_name: str, limit: int | None = None
-) -> tuple[pd.DataFrame | None, str | None]:
+    conn: psycopg2.extensions.connection, schema_name: str, table_name: str, limit: Optional[int] = None
+) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     """
     Fetches data from a table in a specific schema in the PostgreSQL database.
 
