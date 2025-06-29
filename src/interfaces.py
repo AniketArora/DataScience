@@ -167,5 +167,3 @@ class AnalysisModuleInterface(ABC):
 #             st_object.dataframe(results)
 #         else:
 #             st_object.error("Invalid results format.")
-
-```
