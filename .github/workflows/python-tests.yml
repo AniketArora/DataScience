@@ -24,10 +24,10 @@ jobs:
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         pip install pytest # Ensure pytest is installed
 
-    - name: Test with pytest
+    - name: Run pytest and save output
       id: pytest
       run: |
-        pytest
+        pytest | tee pytest-result.txt
       # Continue on error so the next step can create an issue
       continue-on-error: true
 
@@ -37,10 +37,6 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         title: "Unit Test Failures on main branch"
-        body: |
-          The unit tests failed. Please investigate.
-          - Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        content-filepath: pytest-result.txt
         labels: jules
         assignees: ${{ github.actor }}
-      env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
