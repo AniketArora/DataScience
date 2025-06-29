@@ -1,93 +1,148 @@
 import subprocess
 import pytest
-import sys # To get python interpreter path
+import sys
+import time
 
 # Define a timeout for the Streamlit app launch
-LAUNCH_TIMEOUT = 30  # seconds
+LAUNCH_TIMEOUT = 45  # seconds, can be adjusted
+STREAMLIT_TEST_PORT = "8555" # Using a distinct port for testing
 
-def test_app_launches_successfully():
+@pytest.fixture(scope="function") # Changed to function scope for cleaner state if multiple tests use it
+def streamlit_app_process():
     """
-    Tests if the Streamlit application launches successfully within a timeout.
-    It checks for a return code of 0 (success) or 1 (expected if already running or port issue).
-    It also verifies that there is some output to stdout or stderr.
+    Fixture to start the Streamlit app as a subprocess and ensure its termination.
     """
+    command = [
+        sys.executable, "-m", "streamlit", "run", "src/main.py",
+        "--server.runOnSave=false",
+        "--server.headless=true",
+        f"--server.port={STREAMLIT_TEST_PORT}",
+        "--server.fileWatcherType=none" # Disable file watcher for stability
+    ]
+
+    print(f"Starting Streamlit app with command: {' '.join(command)}")
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1, # Line-buffered
+        universal_newlines=True
+    )
+
+    yield process # Provide the process to the test
+
+    print(f"Terminating Streamlit app process (PID: {process.pid})...")
+    process.terminate()
     try:
-        # Command to run Streamlit in headless mode for testing
-        # --server.runOnSave=false is important to prevent continuous reruns in some environments
-        # --server.headless=true is crucial for CI environments
-        # --server.port can be set to a specific free port if default 8501 causes issues
-        command = [
-            sys.executable, "-m", "streamlit", "run", "src/main.py",
-            "--server.runOnSave=false",
-            "--server.headless=true"
-        ]
-
-        # Start the Streamlit app as a subprocess
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True  # Decode stdout/stderr as text
-        )
-
-        # Wait for the process to complete or timeout
-        # Streamlit in headless mode might run until explicitly killed.
-        # We are looking for it to start up and print initial messages.
-        # A short sleep might be needed for Streamlit to initialize before we terminate.
-        try:
-            stdout, stderr = process.communicate(timeout=LAUNCH_TIMEOUT)
-            return_code = process.returncode
-        except subprocess.TimeoutExpired:
-            process.kill()  # Ensure the process is killed if it times out
-            stdout, stderr = process.communicate()
-            # If it times out, it means Streamlit started and was running.
-            # This is a successful launch for a server application.
-            # We don't expect Streamlit to exit on its own in headless mode quickly.
-            # Consider timeout as a sign of successful persistent server start.
-            # However, for a quick "does it start" check, we might expect it to error out if misconfigured.
-            # For now, let's assume timeout means it's running.
-            # A more robust check would be to query the Streamlit health endpoint if available.
-            # For this test, we'll consider a timeout as "launched and running".
-            # If Streamlit exits very quickly with 0, it might not have fully started.
-            # If it errors out quickly (non-0), that's a failure.
-
-            # Check if there's any output, which indicates it tried to start
-            assert stdout or stderr, "No output from Streamlit process on timeout, might not have started."
-            # If it timed out, it means it was running. We can consider this a pass for "launches".
-            # No specific return code assertion here as we killed it.
-            print(f"Streamlit app timed out after {LAUNCH_TIMEOUT}s (considered launched and running).")
-            print(f"STDOUT:\n{stdout}")
-            print(f"STDERR:\n{stderr}")
-            return # Success case for timeout
-
-        # If communicate() completed without timeout (Streamlit exited on its own)
-        # This might happen if there's a critical startup error.
-        # A normal Streamlit server launch will not exit quickly unless --server.headless=true
-        # has a different behavior or an immediate error occurs.
-
-        # Check the return code
-        # Streamlit might return 0 if it starts and then something immediately stops it (e.g. if it's not a "serve" command)
-        # or if --server.headless=true has a mode where it exits after confirming it *can* start.
-        # It might return 1 for common issues like port already in use.
-        # For a simple "can it start?" test, any output is good.
-        # A more robust test would involve checking a health endpoint.
-        assert return_code == 0, f"Streamlit process exited with code {return_code}.\nStdout: {stdout}\nStderr: {stderr}"
-
-        # Check that there was some output
-        assert stdout or stderr, "No output from Streamlit process, it might not have started correctly."
-
-        print(f"Streamlit app launch test completed with return code {return_code}.")
+        stdout, stderr = process.communicate(timeout=10) # Allow time for graceful shutdown
+        print("Streamlit app process terminated.")
         if stdout:
-            print(f"STDOUT:\n{stdout}")
+            print(f"Final STDOUT from Streamlit app:\n{stdout}")
         if stderr:
-            print(f"STDERR:\n{stderr}")
+            print(f"Final STDERR from Streamlit app:\n{stderr}")
+    except subprocess.TimeoutExpired:
+        print("Streamlit app process did not terminate gracefully, killing.")
+        process.kill()
+        stdout, stderr = process.communicate() # Get output after kill
+        print("Streamlit app process killed.")
+        if stdout:
+            print(f"Final STDOUT (after kill) from Streamlit app:\n{stdout}")
+        if stderr:
+            print(f"Final STDERR (after kill) from Streamlit app:\n{stderr}")
+    except Exception as e:
+        print(f"Error during Streamlit app termination: {e}")
 
-    except FileNotFoundError:
+
+def test_app_launches_successfully(streamlit_app_process):
+    """
+    Tests if the Streamlit application starts and seems to be running.
+    It checks for specific output messages or relies on timeout as an indicator of a running server.
+    """
+    process = streamlit_app_process
+
+    # Attempt to read initial output for readiness cues
+    # This is a heuristic; a more robust check might involve trying to connect if environment allows
+    app_ready_indicator_found = False
+    stderr_lines = [] # Store stderr lines to check for early critical errors
+
+    # Give the app some time to print initial messages
+    # We'll read non-blockingly or with small timeouts if possible,
+    # but Popen.stdout.readline() is blocking.
+    # A common pattern is to use select or threads for non-blocking reads,
+    # but we'll keep it simpler here and rely on the overall LAUNCH_TIMEOUT.
+
+    print(f"Monitoring Streamlit app output for up to {LAUNCH_TIMEOUT} seconds...")
+    start_time = time.time()
+
+    # We expect Streamlit in headless mode to run until killed.
+    # So, we are looking for it to *not* exit quickly and to print startup messages.
+    try:
+        while time.time() - start_time < LAUNCH_TIMEOUT:
+            # Check if process terminated unexpectedly
+            if process.poll() is not None:
+                stdout, stderr = process.communicate() # Get all remaining output
+                pytest.fail(
+                    f"Streamlit process terminated unexpectedly with code {process.returncode}.\n"
+                    f"STDOUT:\n{stdout}\n"
+                    f"STDERR:\n{stderr}"
+                )
+
+            # Attempt to read a line from stdout with a short timeout (not directly possible with readline)
+            # Instead, we'll rely on the overall LAUNCH_TIMEOUT and check output after a timeout from communicate()
+            # For now, this loop mainly checks process.poll() and then we handle communicate() timeout.
+            # A more advanced version would use threads or select for non-blocking reads here.
+            time.sleep(0.5) # Check status every 0.5s
+
+        # If loop finishes, it means LAUNCH_TIMEOUT reached without process ending.
+        # This is the "success" case for a server process.
+        print(f"Streamlit app did not terminate within {LAUNCH_TIMEOUT}s (considered launched and running).")
+        # Now, kill it and get output
+        process.kill() # Using kill directly as we've timed out waiting for it to be "ready"
+        stdout, stderr = process.communicate(timeout=10) # 10s for communicate after kill
+
+        assert stdout or stderr, "No output from Streamlit process on timeout, might not have started properly."
+        print("Streamlit app considered successfully launched as it ran for the timeout duration.")
+        if stdout:
+            print(f"STDOUT (on timeout):\n{stdout}")
+        if stderr: # stderr might contain "Serving at..." messages which are normal
+            print(f"STDERR (on timeout):\n{stderr}")
+
+        # Check for common success messages in the output captured
+        if "You can now view your Streamlit app in your browser." in stdout or \
+           "Network URL:" in stdout or "External URL:" in stdout:
+            app_ready_indicator_found = True
+            print("App ready indicator found in STDOUT.")
+
+        # This assertion is a bit weak if only relying on timeout, stronger if indicator found.
+        assert app_ready_indicator_found or (stdout or stderr), \
+            "Streamlit app timed out but no output or readiness indicator found."
+
+    except subprocess.TimeoutExpired: # Should be caught by the outer timeout logic now.
+        # This block might not be reached if the while loop handles timeout.
+        # Kept for safety, mirrors original logic.
+        process.kill()
+        stdout, stderr = process.communicate()
+        assert stdout or stderr, "No output from Streamlit process on timeout (TimeoutExpired), might not have started."
+        print(f"Streamlit app timed out (TimeoutExpired) after {LAUNCH_TIMEOUT}s (considered launched and running).")
+        if stdout:
+            print(f"STDOUT (on TimeoutExpired):\n{stdout}")
+        if stderr:
+            print(f"STDERR (on TimeoutExpired):\n{stderr}")
+        # No specific return code assertion here as we killed it.
+        return # Success
+
+    except FileNotFoundError: # Should be caught by Popen if command fails
         pytest.fail("Streamlit command not found. Ensure Streamlit is installed and in PATH.")
     except Exception as e:
+        # Ensure process is cleaned up if an unexpected error occurs
+        if process and process.poll() is None:
+            process.kill()
+            process.communicate() # Clean up pipes
         pytest.fail(f"An unexpected error occurred during the test: {e}")
 
-def test_streamlit_help_works():
+
+def test_streamlit_help_works(): # No changes to this test, it's fairly robust
     """
     A simpler test to check if the streamlit CLI is basically working.
     """
