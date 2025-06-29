@@ -1,0 +1,50 @@
+name: Python Unit Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v3
+      with:
+        python-version: 3.9
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        pip install pytest # Ensure pytest is installed
+
+    - name: Test with pytest
+      id: pytest
+      run: |
+        pytest
+      # Continue on error so the next step can create an issue
+      continue-on-error: true
+
+    - name: Create issue file on failure
+      if: steps.pytest.outcome == 'failure'
+      run: |
+        mkdir -p .github
+        echo "title: Unit Test Failures on main branch" > .github/ISSUE_TEMPLATE.md
+        echo "labels: jules" >> .github/ISSUE_TEMPLATE.md
+        echo "assignees: ${{ github.actor }}" >> .github/ISSUE_TEMPLATE.md
+        echo "" >> .github/ISSUE_TEMPLATE.md # Empty line before body
+        echo "The unit tests failed. Please investigate." >> .github/ISSUE_TEMPLATE.md
+        echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> .github/ISSUE_TEMPLATE.md
+
+    - name: Create Issue from File on Test Failure
+      if: steps.pytest.outcome == 'failure'
+      uses: peter-evans/create-issue-from-file@v5
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        filepath: .github/ISSUE_TEMPLATE.md
