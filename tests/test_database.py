@@ -13,7 +13,17 @@ from src.database import (
 
 class TestDatabaseUtils(unittest.TestCase):
 
+    def setUp(self):
+        # Clear caches for functions that use Streamlit caching before each test
+        # to ensure mocks are hit and not cached results.
+        connect_postgres.clear()
+        # If other functions were also causing issues, clear them here too:
+        # get_schemas_postgres.clear()
+        # get_tables_postgres.clear()
+        # fetch_data_postgres.clear()
+
     def test_connect_postgres_success(self):
+        connect_postgres.clear() # Explicit clear for this specific test too, just in case
         with patch('src.database.psycopg2.connect') as mock_psycopg2_connect:
             mock_conn_obj = MagicMock()
             mock_psycopg2_connect.return_value = mock_conn_obj
@@ -26,6 +36,7 @@ class TestDatabaseUtils(unittest.TestCase):
             self.assertIsNone(err)
 
     def test_connect_postgres_failure(self):
+        connect_postgres.clear() # Explicit clear for this specific test too
         with patch('src.database.psycopg2.connect') as mock_psycopg2_connect:
             mock_psycopg2_connect.side_effect = psycopg2.Error("Connection failed")
             db_config = {"host": "localhost", "port": "5432", "dbname": "testdb", "user": "testuser", "password": "testpassword"}
