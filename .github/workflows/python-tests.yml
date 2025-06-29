@@ -33,7 +33,7 @@ jobs:
 
     - name: Create Issue on Test Failure
       if: steps.pytest.outcome == 'failure'
-      uses: actions/create-issue@v2
+      uses: peter-evans/create-issue@v5
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         title: "Unit Test Failures on main branch"
@@ -42,5 +42,3 @@ jobs:
           - Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         labels: jules
         assignees: ${{ github.actor }}
-      env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
