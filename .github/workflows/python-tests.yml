@@ -24,21 +24,19 @@ jobs:
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         pip install pytest # Ensure pytest is installed
 
-    - name: Test with pytest
+    - name: Run pytest and save output
       id: pytest
       run: |
-        pytest
+        pytest | tee pytest-result.txt
       # Continue on error so the next step can create an issue
       continue-on-error: true
 
     - name: Create Issue on Test Failure
       if: steps.pytest.outcome == 'failure'
-      uses: peter-evans/create-issue@v5
+      uses: peter-evans/create-issue-from-file@v5
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         title: "Unit Test Failures on main branch"
-        body: |
-          The unit tests failed. Please investigate.
-          - Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        content-filepath: pytest-result.txt
         labels: jules
         assignees: ${{ github.actor }}
