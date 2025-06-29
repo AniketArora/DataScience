@@ -12,6 +12,7 @@ jobs:
     permissions:
       issues: write # Grant permission to create issues
 
+
     steps:
     - uses: actions/checkout@v3
 
