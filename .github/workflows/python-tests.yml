@@ -33,7 +33,7 @@ jobs:
 
     - name: Create Issue on Test Failure
       if: steps.pytest.outcome == 'failure'
-      uses: peter-evans/create-issue-from-file@v5
+      uses: actions/create-issue@v4
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         title: "Unit Test Failures on main branch"
