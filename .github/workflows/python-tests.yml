@@ -9,6 +9,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write        # still required for non-fork PRs
 
     steps:
     - uses: actions/checkout@v3
@@ -48,3 +51,5 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         filepath: .github/ISSUE_TEMPLATE.md
+        assignees: ${{ github.actor }}
+      continue-on-error: true               # prevents exit code 2 if creation still fails
