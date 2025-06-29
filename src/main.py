@@ -87,29 +87,29 @@ if 'feature_generation_errors' not in st.session_state: # Initialize new state f
 
 # --- Imports for modules (will be used later but good to have grouped) ---
 import matplotlib.pyplot as plt
-from src.database import connect_postgres, get_schemas_postgres, get_tables_postgres, fetch_data_postgres
-from src.analysis_modules.profiling import (
+from database import connect_postgres, get_schemas_postgres, get_tables_postgres, fetch_data_postgres
+from analysis_modules.profiling import (
     get_series_summary_stats,
     get_missing_values_summary,
     perform_stationarity_test
 )
-from src.analysis_modules.decomposition import decompose_time_series
-from src.analysis_modules.anomalies import (
+from analysis_modules.decomposition import decompose_time_series
+from analysis_modules.anomalies import (
     detect_anomalies_zscore,
     detect_anomalies_iqr,
     # detect_anomalies_isolation_forest, # Now part of AnomalyDetectionAnalysisModule
     # detect_anomalies_one_class_svm, # Now part of AnomalyDetectionAnalysisModule
     AnomalyDetectionAnalysisModule
 )
-from src.analysis_modules.feature_engineering import generate_all_features_for_series, run_feature_engineering_for_all_devices
-from src.analysis_modules.clustering import (
+from analysis_modules.feature_engineering import generate_all_features_for_series, run_feature_engineering_for_all_devices
+from analysis_modules.clustering import (
     perform_kmeans_clustering,
     # perform_kmeans_clustering, # Now part of ClusteringAnalysisModule
     # get_kmeans_elbow_silhouette_data, # Now part of ClusteringAnalysisModule
     # perform_dbscan_clustering, # Now part of ClusteringAnalysisModule
     ClusteringAnalysisModule
 )
-from src.analysis_modules.explainability import (
+from analysis_modules.explainability import (
     get_cluster_feature_summary,
     get_feature_importance_for_clusters_anova,
     compare_anomalous_vs_normal_features,
@@ -118,7 +118,7 @@ from src.analysis_modules.explainability import (
     explain_anomalies_with_surrogate_model
 )
 from sklearn.tree import plot_tree # For visualizing surrogate tree
-from src.config_utils import (
+from config_utils import (
     gather_settings_for_save,
     apply_loaded_settings_to_session_state,
     # Assuming these key lists are defined in config_utils as per previous setup
