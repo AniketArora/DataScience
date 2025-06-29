@@ -12,7 +12,6 @@ jobs:
     permissions:
       issues: write # Grant permission to create issues
 
-
     steps:
     - uses: actions/checkout@v3
 
@@ -39,12 +38,16 @@ jobs:
       if: steps.pytest.outcome == 'failure'
       run: |
         mkdir -p .github
-        echo "title: Unit Test Failures on main branch" > .github/ISSUE_TEMPLATE.md
-        echo "labels: jules" >> .github/ISSUE_TEMPLATE.md
-        echo "assignees: ${{ github.actor }}" >> .github/ISSUE_TEMPLATE.md
-        echo "" >> .github/ISSUE_TEMPLATE.md # Empty line before body
-        echo "The unit tests failed. Please investigate." >> .github/ISSUE_TEMPLATE.md
-        echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> .github/ISSUE_TEMPLATE.md
+        {
+          echo "---"
+          echo "title: Unit Test Failures on main branch"
+          echo "labels: jules"
+          echo "assignees: ${{ github.actor }}"
+          echo "---"
+          echo ""
+          echo "The unit tests failed. Please investigate."
+          echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        } > .github/ISSUE_TEMPLATE.md
 
     - name: Create Issue from File on Test Failure
       if: steps.pytest.outcome == 'failure'
