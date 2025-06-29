@@ -97,7 +97,7 @@ def test_explain_anomalies_surrogate_input_validation():
     assert "Indices must match." in err; assert tree is None # Updated error message check
     labels_single_class = pd.Series([1,1,1], index=['d1','d2','d3'], dtype=int)
     tree, imp, rep, err = explain_anomalies_with_surrogate_model(feat_df, labels_single_class)
-    assert "Need at least two distinct classes." in err; assert tree is None # Updated error message
+    assert "Need at least two distinct classes for surrogate model training." in err; assert tree is None
 
 def test_explain_anomalies_surrogate_model_importances_check(sample_features_for_surrogate, sample_anomaly_labels_for_surrogate):
     _, importances, _, error = explain_anomalies_with_surrogate_model(sample_features_for_surrogate, sample_anomaly_labels_for_surrogate, max_depth=3, test_size=0)

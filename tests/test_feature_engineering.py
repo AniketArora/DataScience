@@ -108,6 +108,10 @@ def test_extract_autocorrelation_features_normal(normal_series):
 @patch('src.analysis_modules.feature_engineering.extract_autocorrelation_features')
 def test_generate_all_features_uses_custom_acf_lags(mock_extract_acf, normal_series):
     custom_lags = [2, 4, 6]
+    # Define a return value for the mock that includes the expected feature names
+    mock_return_data = {f"ts_acf_acf_lag_{lag}": np.random.rand() for lag in custom_lags}
+    mock_extract_acf.return_value = pd.Series(mock_return_data)
+
     features_series, _ = generate_all_features_for_series(normal_series, acf_lags_list=custom_lags)
     mock_extract_acf.assert_called_with(normal_series, lags=custom_lags, prefix="ts_acf_")
     for lag in custom_lags:
@@ -116,12 +120,25 @@ def test_generate_all_features_uses_custom_acf_lags(mock_extract_acf, normal_ser
 @patch('src.analysis_modules.feature_engineering.extract_autocorrelation_features')
 def test_generate_all_features_uses_default_acf_lags(mock_extract_acf, normal_series):
     default_lags = [1, 5, 10] # Default defined in generate_all_features
+    # Define a return value for the mock
+    mock_return_data = {f"ts_acf_acf_lag_{lag}": np.random.rand() for lag in default_lags}
+    mock_extract_acf.return_value = pd.Series(mock_return_data)
+
     features_series, _ = generate_all_features_for_series(normal_series, acf_lags_list=None)
     mock_extract_acf.assert_called_with(normal_series, lags=default_lags, prefix="ts_acf_")
+    # Optionally, assert that features from the mock are present
+    for lag in default_lags:
+        assert f"ts_acf_acf_lag_{lag}" in features_series.index
 
 @patch('src.analysis_modules.feature_engineering.extract_rolling_stats_features')
 def test_generate_all_features_uses_custom_rolling_windows(mock_extract_rolling, normal_series):
     custom_windows = [3, 7, 14]
+    # Define a return value for the mock that includes one expected feature name per window
+    mock_return_data = {}
+    for w in custom_windows:
+        mock_return_data[f"ts_roll_mean_of_means_w{w}"] = np.random.rand()
+    mock_extract_rolling.return_value = pd.Series(mock_return_data)
+
     features_series, _ = generate_all_features_for_series(normal_series, rolling_windows_list=custom_windows)
     mock_extract_rolling.assert_called_with(normal_series, windows=custom_windows, prefix="ts_roll_")
     for w in custom_windows: # Check one stat type for each window
@@ -130,8 +147,17 @@ def test_generate_all_features_uses_custom_rolling_windows(mock_extract_rolling,
 @patch('src.analysis_modules.feature_engineering.extract_rolling_stats_features')
 def test_generate_all_features_uses_default_rolling_windows(mock_extract_rolling, normal_series):
     default_windows = [1, 5, 10, 20] # Default defined in generate_all_features
+    # Define a return value for the mock
+    mock_return_data = {}
+    for w in default_windows:
+        mock_return_data[f"ts_roll_mean_of_means_w{w}"] = np.random.rand()
+    mock_extract_rolling.return_value = pd.Series(mock_return_data)
+
     features_series, _ = generate_all_features_for_series(normal_series, rolling_windows_list=None)
     mock_extract_rolling.assert_called_with(normal_series, windows=default_windows, prefix="ts_roll_")
+    # Optionally, assert that features from the mock are present
+    for w in default_windows:
+        assert f"ts_roll_mean_of_means_w{w}" in features_series.index
 
 
 # --- Test Refined extract_rolling_stats_features Logic ---
@@ -176,7 +202,7 @@ def test_rolling_stats_short_series_for_std_min_periods(very_short_series): # le
     assert not pd.isna(features['short3_rolling_mean_of_means_w3'])
     assert not pd.isna(features['short3_rolling_std_of_means_w3']) # std of (mean of [0,1,2]) is 0
     assert not pd.isna(features['short3_rolling_mean_of_stds_w3']) # mean of (std of [0,1], std of [1,2])
-    assert features['short3_rolling_std_of_stds_w3'] == 0.0 # std of one value (mean_of_stds) is 0.0
+    assert features['short3_rolling_std_of_stds_w3'] == pytest.approx(0.0) # std of one value (mean_of_stds) is 0.0
 
     # Window 2, min_periods for std = 2
     # rolling_std_intermediate will have two values (std of [0,1], std of [1,2])
@@ -292,9 +318,9 @@ def test_run_all_devices_generate_features_returns_error_orchestration(mock_gene
     assert result_df.index[0] == 'dev1'
     assert 'value_basic_mean' in result_df.columns
     assert mock_generate_features.call_count == 3
-    assert len(error_list) == 2
-    assert any("dev2" in item[0] and "Simulated processing error for dev2" in item[1] for item in error_list)
-    assert any("dev3" in item[0] and "No features generated" in item[1] for item in error_list)
+    assert len(error_list) == 2 # This will fail if the "No features generated" case isn't added
+    assert any(item[0] == 'dev2' and "Simulated processing error for dev2" in item[1] for item in error_list)
+    assert any(item[0] == 'dev3' and "No features generated, skipping." in item[1] for item in error_list)
 
 # Ensure existing xfail tests are still here if relevant, or update/remove them
 @pytest.mark.xfail(reason="Known issue or behavior to verify: specific aggregated rolling stats can be NaN/0 for short/constant series.")
