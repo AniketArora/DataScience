@@ -34,24 +34,21 @@ jobs:
       # Continue on error so the next step can create an issue
       continue-on-error: true
 
-    - name: Create issue file on failure
+    - name: Create issue body file on failure
       if: steps.pytest.outcome == 'failure'
       run: |
         mkdir -p .github
         {
-          echo "---"
-          echo "title: Unit Test Failures on main branch"
-          echo "labels: jules"
-          echo "assignees: ${{ github.actor }}"
-          echo "---"
-          echo ""
           echo "The unit tests failed. Please investigate."
           echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-        } > .github/ISSUE_TEMPLATE.md
+        } > .github/ISSUE_BODY.md
 
     - name: Create Issue from File on Test Failure
       if: steps.pytest.outcome == 'failure'
       uses: peter-evans/create-issue-from-file@v5
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
-        content-filepath: .github/ISSUE_TEMPLATE.md
+        title: "Unit Test Failures on main branch"
+        content-filepath: .github/ISSUE_BODY.md
+        labels: jules
+        assignees: ${{ github.actor }}
