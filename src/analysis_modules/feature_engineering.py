@@ -207,7 +207,7 @@ def extract_event_features_for_series(
     series_duration_hours = (series_end_time - series_start_time).total_seconds() / 3600.0
 
     for raw_event_type in event_types_to_process_locally:
-        clean_event_type_name = str(raw_event_type).replace(" ", "_").replace("(", "").replace(")", "").replace(":", "")[:30]
+        clean_event_type_name = str(raw_local_event_type).replace(" ", "_").replace("(", "").replace(")", "").replace(":", "")[:30]
 
         current_count = event_type_counts.get(raw_event_type, 0)
         features[f'{prefix}count_{clean_event_type_name}'] = current_count
