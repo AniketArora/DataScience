@@ -89,68 +89,55 @@ def extract_autocorrelation_features(series: pd.Series, lags: list, prefix=""): 
         for lag in lags: features[f'{prefix}acf_lag_{lag}'] = np.nan
     return features
 
-def extract_rolling_stats_features(series: pd.Series, windows: list, prefix=""): # windows is now a list
+def extract_rolling_stats_features(series: pd.Series, windows: list, prefix=""):
     features = {}
     series_cleaned = series.dropna()
 
+    # Initialize all possible features to NaN. This is a safeguard.
+    for window in windows:
+        for stat_name in ['mean_of_means', 'mean_of_stds', 'std_of_means', 'std_of_stds']:
+            features[f'{prefix}{stat_name}_w{window}'] = np.nan
+
     if series_cleaned.empty:
+        return features
+
+    # If the series is constant, all std-based features are 0, and the mean is the constant value.
+    # This is a critical edge case.
+    if series_cleaned.nunique() == 1:
+        constant_value = series_cleaned.iloc[0]
         for window in windows:
-            for stat_name in ['mean_of_means', 'mean_of_stds', 'std_of_means', 'std_of_stds']:
-                features[f'{prefix}rolling_{stat_name}_w{window}'] = np.nan
+            features[f'{prefix}mean_of_means_w{window}'] = constant_value
+            features[f'{prefix}mean_of_stds_w{window}'] = 0.0
+            features[f'{prefix}std_of_means_w{window}'] = 0.0
+            features[f'{prefix}std_of_stds_w{window}'] = 0.0
         return features
 
     for window in windows:
-        for stat_name_init in ['mean_of_means', 'mean_of_stds', 'std_of_means', 'std_of_stds']:
-            features[f'{prefix}rolling_{stat_name_init}_w{window}'] = np.nan
-
         if not isinstance(window, int) or window <= 0:
-            logger.warning(f"Invalid window size {window} provided for rolling stats. Skipping.")
+            logger.warning(f"Invalid window size {window} provided. Skipping.")
             continue
 
-        if window > len(series_cleaned):
-            continue # Features for this window remain NaN
+        # Use min_periods=1 to include calculations for partial windows at the start of the series.
+        # This prevents losing data for smaller series and ensures rolling objects are not empty.
+        rolling_mean = series_cleaned.rolling(window=window, min_periods=1).mean()
 
-        current_mean_of_means = np.nan
-        current_std_of_means = np.nan
-        current_mean_of_stds = np.nan
-        current_std_of_stds = np.nan
+        # Calculate stats over the rolling mean series
+        features[f'{prefix}mean_of_means_w{window}'] = rolling_mean.mean()
+        std_of_means = rolling_mean.std()
+        features[f'{prefix}std_of_means_w{window}'] = std_of_means if pd.notna(std_of_means) else 0.0
 
+        # For rolling std, min_periods=2 is required for a non-NaN result.
+        # We fillna(0) because the std of a single point or a constant window is 0.
         if window == 1:
-            current_mean_of_means = series_cleaned.mean()
-            current_std_of_means = series_cleaned.std() if len(series_cleaned) >= 2 else 0.0
-            current_mean_of_stds = 0.0
-            current_std_of_stds = 0.0
-        elif series_cleaned.nunique() == 1:
-            constant_value = series_cleaned.iloc[0]
-            current_mean_of_means = constant_value
-            current_std_of_means = 0.0
-            current_mean_of_stds = 0.0
-            current_std_of_stds = 0.0
+            # The std of a rolling window of size 1 is always 0.
+            rolling_std = pd.Series(0.0, index=series_cleaned.index)
         else:
-            rolling_mean_intermediate = series_cleaned.rolling(window=window, min_periods=1).mean().dropna()
-            if not rolling_mean_intermediate.empty:
-                current_mean_of_means = rolling_mean_intermediate.mean()
-                current_std_of_means = rolling_mean_intermediate.std() if len(rolling_mean_intermediate) >= 2 else 0.0
+            rolling_std = series_cleaned.rolling(window=window, min_periods=2).std().fillna(0)
 
-            min_periods_for_std = max(2, window // 2) if window > 1 else 1
-            # For std calculation, min_periods must be at least 1. For a non-NaN std, it's usually 2.
-            # Window for rolling std must be >= min_periods_for_std.
-            if window >= min_periods_for_std:
-                 rolling_std_intermediate = series_cleaned.rolling(window=window, min_periods=min_periods_for_std).std().dropna()
-                 if not rolling_std_intermediate.empty:
-                     current_mean_of_stds = rolling_std_intermediate.mean()
-                     current_std_of_stds = rolling_std_intermediate.std() if len(rolling_std_intermediate) >= 2 else 0.0
-                 else:
-                     current_mean_of_stds = 0.0
-                     current_std_of_stds = 0.0
-            else: # Not enough points for even one std calculation given window and min_periods
-                 current_mean_of_stds = np.nan # Or 0.0 if that's preferred for "no variability measureable"
-                 current_std_of_stds = np.nan  # Or 0.0
-
-        features[f'{prefix}rolling_mean_of_means_w{window}'] = current_mean_of_means
-        features[f'{prefix}rolling_mean_of_stds_w{window}'] = current_mean_of_stds
-        features[f'{prefix}rolling_std_of_means_w{window}'] = current_std_of_means
-        features[f'{prefix}rolling_std_of_stds_w{window}'] = current_std_of_stds
+        # Calculate stats over the rolling std series
+        features[f'{prefix}mean_of_stds_w{window}'] = rolling_std.mean()
+        std_of_stds = rolling_std.std()
+        features[f'{prefix}std_of_stds_w{window}'] = std_of_stds if pd.notna(std_of_stds) else 0.0
 
     return features
 
@@ -220,7 +207,7 @@ def extract_event_features_for_series(
     series_duration_hours = (series_end_time - series_start_time).total_seconds() / 3600.0
 
     for raw_event_type in event_types_to_process_locally:
-        clean_event_type_name = str(raw_event_type).replace(" ", "_").replace("(", "").replace(")", "").replace(":", "")[:30]
+        clean_event_type_name = str(raw_local_event_type).replace(" ", "_").replace("(", "").replace(")", "").replace(":", "")[:30]
 
         current_count = event_type_counts.get(raw_event_type, 0)
         features[f'{prefix}count_{clean_event_type_name}'] = current_count
@@ -452,12 +439,9 @@ def run_feature_engineering_for_all_devices(
                 features_series_df = features_series.to_frame().T
                 features_series_df.index = [entity_id_val]
                 all_features_list.append(features_series_df)
-            elif features_series is not None and features_series.empty:
-                error_summary_list.append((entity_id_val, "No features generated, skipping."))
-                logger.info("No features generated for entity '%s' (empty feature series returned).", entity_id_val)
-            elif features_series is None and not error_msg_feat:
-                 error_summary_list.append((entity_id_val, "No features generated (series might be too short or unsuitable for some feature types)."))
-                 logger.info("No features generated for entity '%s' (series might be too short or unsuitable, but no hard error).", entity_id_val)
+            elif not error_msg_feat:
+                 error_summary_list.append((entity_id_val, "No features generated, skipping."))
+                 logger.info("No features generated for entity '%s' (series might be too short or unsuitable, but no hard error), skipping.", entity_id_val)
 
         except Exception as e_feat_loop:
             error_msg = f"Unhandled exception: {e_feat_loop}"
