@@ -127,6 +127,51 @@ def test_perform_dbscan_clustering_edge_cases():
     assert labels is None
     assert model is None
 
-# Placeholder test can be removed or adapted if ClusteringAnalysisModule tests are added later
-def test_placeholder():
-    assert True
+# --- Tests for ClusteringAnalysisModule ---
+class TestClusteringAnalysisModule:
+    @pytest.fixture
+    def module(self):
+        return ClusteringAnalysisModule()
+
+    def test_run_analysis_kmeans(self, module, sample_feature_df):
+        params = {
+            "method": "K-Means",
+            "n_clusters": 3,
+            "scale_data_kmeans": True
+        }
+        results, error = module.run_analysis(sample_feature_df, params, {})
+        assert error is None
+        assert results is not None
+        assert results['method'] == "K-Means"
+        assert "labels" in results
+        assert "model" in results
+
+    def test_run_analysis_dbscan(self, module, sample_feature_df):
+        params = {
+            "method": "DBSCAN",
+            "eps": 1.0, # Adjusted for sample data
+            "min_samples": 3,
+            "scale_data_dbscan": True
+        }
+        results, error = module.run_analysis(sample_feature_df, params, {})
+        assert error is None
+        assert results is not None
+        assert results['method'] == "DBSCAN"
+        assert "labels" in results
+        assert "model" in results
+
+    def test_run_analysis_empty_df(self, module):
+        params = {"method": "K-Means"}
+        _, error = module.run_analysis(pd.DataFrame(), params, {})
+        assert "Input data is empty" in error
+
+    def test_run_analysis_nan_df(self, module):
+        params = {"method": "K-Means"}
+        nan_df = pd.DataFrame({'A': [1, np.nan], 'B': [2, 3]})
+        _, error = module.run_analysis(nan_df, params, {})
+        assert "Input data contains NaN values" in error
+
+    def test_run_analysis_unknown_method(self, module, sample_feature_df):
+        params = {"method": "Unknown Method"}
+        _, error = module.run_analysis(sample_feature_df, params, {})
+        assert "Unsupported clustering method" in error

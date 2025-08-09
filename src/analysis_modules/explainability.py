@@ -12,6 +12,17 @@ logger = logging.getLogger(__name__)
 
 @st.cache_data
 def get_cluster_feature_summary(feature_df: pd.DataFrame, cluster_labels: pd.Series):
+    """
+    Calculates the mean of numeric features for each cluster.
+
+    Args:
+        feature_df (pd.DataFrame): DataFrame with device features.
+        cluster_labels (pd.Series): Series with cluster labels for each device.
+
+    Returns:
+        pd.DataFrame or None: A DataFrame with mean feature values for each cluster, or None on error.
+        str or None: An error message if something goes wrong.
+    """
     if not isinstance(feature_df, pd.DataFrame) or not isinstance(cluster_labels, pd.Series):
         msg = "Inputs must be pandas DataFrame and Series."
         logger.warning(msg)
@@ -48,6 +59,17 @@ def get_cluster_feature_summary(feature_df: pd.DataFrame, cluster_labels: pd.Ser
 
 @st.cache_data
 def get_feature_importance_for_clusters_anova(feature_df: pd.DataFrame, cluster_labels: pd.Series):
+    """
+    Calculates feature importance for distinguishing clusters using ANOVA F-test.
+
+    Args:
+        feature_df (pd.DataFrame): DataFrame with device features.
+        cluster_labels (pd.Series): Series with cluster labels for each device.
+
+    Returns:
+        pd.DataFrame or None: A DataFrame with F-values and P-values for each feature, sorted by F-value.
+        str or None: An error message if something goes wrong.
+    """
     if not isinstance(feature_df, pd.DataFrame) or not isinstance(cluster_labels, pd.Series):
         msg = "Inputs must be pandas DataFrame and Series."
         logger.warning(msg)
@@ -95,6 +117,18 @@ def get_feature_importance_for_clusters_anova(feature_df: pd.DataFrame, cluster_
 
 @st.cache_data
 def compare_anomalous_vs_normal_features(feature_df: pd.DataFrame, anomaly_labels: pd.Series, anomalous_label_val=-1):
+    """
+    Compares the mean feature values of anomalous devices vs. normal devices.
+
+    Args:
+        feature_df (pd.DataFrame): DataFrame with device features.
+        anomaly_labels (pd.Series): Series with anomaly labels (-1 for anomalous, 1 for normal).
+        anomalous_label_val (int, optional): The label value for anomalous devices. Defaults to -1.
+
+    Returns:
+        pd.DataFrame or None: A DataFrame comparing mean feature values, or None on error.
+        str or None: An error message if something goes wrong.
+    """
     if not isinstance(feature_df, pd.DataFrame) or not isinstance(anomaly_labels, pd.Series):
         msg = "Inputs must be pandas DataFrame and Series."
         logger.warning(msg)
@@ -147,6 +181,25 @@ def compare_anomalous_vs_normal_features(feature_df: pd.DataFrame, anomaly_label
 def explain_anomalies_with_surrogate_model(
     feature_df: pd.DataFrame, anomaly_labels: pd.Series, anomalous_label_val=-1, normal_label_val=1,
     max_depth=5, random_state=42, test_size=0.2 ):
+    """
+    Trains a surrogate decision tree model to explain the output of an anomaly detection model.
+
+    Args:
+        feature_df (pd.DataFrame): DataFrame with device features.
+        anomaly_labels (pd.Series): Series with anomaly labels.
+        anomalous_label_val (int, optional): Label for anomalous devices. Defaults to -1.
+        normal_label_val (int, optional): Label for normal devices. Defaults to 1.
+        max_depth (int, optional): Maximum depth of the decision tree. Defaults to 5.
+        random_state (int, optional): Random state for reproducibility. Defaults to 42.
+        test_size (float, optional): Proportion of the dataset to include in the test split. Defaults to 0.2.
+
+    Returns:
+        Tuple containing:
+        - sklearn.tree.DecisionTreeClassifier or None: The trained surrogate model.
+        - pd.Series or None: Feature importances from the model.
+        - dict or None: A classification report if a test set was used.
+        - str or None: An error message.
+    """
     if not isinstance(feature_df, pd.DataFrame) or not isinstance(anomaly_labels, pd.Series):
         msg = "Inputs must be pandas DataFrame and Series."
         logger.warning(msg)
@@ -194,6 +247,20 @@ def generate_cluster_summary_text(
     overall_mean_features: pd.Series,
     num_features_to_mention=3
 ):
+    """
+    Generates a natural language summary for a given cluster.
+
+    Args:
+        cluster_id: The ID of the cluster.
+        cluster_size (int): The number of devices in the cluster.
+        total_devices (int): The total number of devices.
+        cluster_mean_features_for_this_cluster (pd.Series): Mean feature values for the cluster.
+        overall_mean_features (pd.Series): Mean feature values for all devices.
+        num_features_to_mention (int, optional): The number of distinguishing features to mention. Defaults to 3.
+
+    Returns:
+        str: A text summary of the cluster's characteristics.
+    """
     text = f"Cluster {cluster_id} contains {cluster_size} devices ({cluster_size/total_devices:.1%} of total). "
     if cluster_mean_features_for_this_cluster is None or cluster_mean_features_for_this_cluster.empty or \
        overall_mean_features is None or overall_mean_features.empty:
@@ -228,6 +295,19 @@ def generate_cluster_summary_text(
 def generate_anomaly_summary_text(
     device_id, anomaly_score, top_features_comparison: pd.DataFrame = None,
     surrogate_tree_importances: pd.Series = None, num_features_to_mention=3 ):
+    """
+    Generates a natural language summary for a single anomalous device.
+
+    Args:
+        device_id: The ID of the anomalous device.
+        anomaly_score (float): The anomaly score of the device.
+        top_features_comparison (pd.DataFrame, optional): DataFrame from compare_anomalous_vs_normal_features.
+        surrogate_tree_importances (pd.Series, optional): Feature importances from the surrogate model.
+        num_features_to_mention (int, optional): The number of distinguishing features to mention. Defaults to 3.
+
+    Returns:
+        str: A text summary explaining why the device is considered anomalous.
+    """
     text = f"Device {device_id} is flagged as anomalous with a score of {anomaly_score:.2f}. "
     if surrogate_tree_importances is not None and not surrogate_tree_importances.empty:
         text += "Surrogate tree suggests key factors: "
@@ -254,6 +334,18 @@ def analyze_event_correlations(
     result_labels: pd.Series,
     event_feature_prefix="evt_count_"
 ):
+    """
+    Analyzes the correlation between event occurrences and cluster/anomaly labels.
+
+    Args:
+        all_device_features_df_with_event_features (pd.DataFrame): DataFrame containing device features and event counts.
+        result_labels (pd.Series): Series with cluster or anomaly labels for each device.
+        event_feature_prefix (str, optional): Prefix to identify event count columns. Defaults to "evt_count_".
+
+    Returns:
+        pd.DataFrame or None: A DataFrame with the mean event counts per group, or None on error.
+        str or None: An error message if something goes wrong.
+    """
     if not isinstance(all_device_features_df_with_event_features, pd.DataFrame) or \
        not isinstance(result_labels, pd.Series):
         msg = "Inputs must be pandas DataFrame and Series."
@@ -354,15 +446,88 @@ if __name__ == '__main__':
         mock_features_with_events = features.copy()
         mock_features_with_events['evt_count_Error_X'] = rng.randint(0, 5, size=len(features))
         mock_features_with_events['evt_count_Warning_Y'] = rng.randint(0, 10, size=len(features))
+        mock_features_with_events['evt_count_Info_Z'] = rng.randint(0, 2, size=len(features)) # Low count event
         anomalous_idx_for_event_test = mock_anomaly_labels[mock_anomaly_labels == -1].index
-        mock_features_with_events.loc[anomalous_idx_for_event_test, 'evt_count_Error_X'] += 3
+        normal_idx_for_event_test = mock_anomaly_labels[mock_anomaly_labels == 1].index
+
+        # Make Error_X more prevalent in anomalous
+        mock_features_with_events.loc[anomalous_idx_for_event_test, 'evt_count_Error_X'] = rng.randint(1, 5, size=len(anomalous_idx_for_event_test))
+        mock_features_with_events.loc[normal_idx_for_event_test, 'evt_count_Error_X'] = rng.randint(0, 2, size=len(normal_idx_for_event_test))
+        # Make Info_Z more prevalent in normal (baseline)
+        mock_features_with_events.loc[normal_idx_for_event_test, 'evt_count_Info_Z'] = 1
+
+
         event_corr_df, error_ec = analyze_event_correlations(mock_features_with_events, mock_anomaly_labels)
         if error_ec: print(f"Error: {error_ec}")
         else: print("Event Correlation with Anomaly Labels (Mean Event Counts):\n", event_corr_df)
+
         if 'mock_cluster_labels' in locals():
            event_corr_clusters_df, error_ecc = analyze_event_correlations(mock_features_with_events, mock_cluster_labels)
            if error_ecc: print(f"Error: {error_ecc}")
            else: print("\nEvent Correlation with Cluster Labels (Mean Event Counts):\n", event_corr_clusters_df)
+
+    print("\n--- Significant Event Type Analysis (Lift & Chi2) ---")
+    if 'mock_features_with_events' in locals() and 'mock_anomaly_labels' in locals():
+        # Test case 1: Anomalous (-1) vs Baseline (all others, which is 1 in this case)
+        sig_events_df, error_sig = analyze_significant_event_types(
+            mock_features_with_events,
+            mock_anomaly_labels,
+            event_feature_prefix="evt_count_",
+            at_risk_label=-1
+        )
+        if error_sig:
+            print(f"Error in significant event analysis (anomalous vs all others): {error_sig}")
+        else:
+            print("Significant Events (Anomalous [-1] vs. Rest [1]):\n", sig_events_df)
+
+        # Test case 2: Anomalous (-1) vs specific Baseline (1)
+        # This should yield similar results to above if only -1 and 1 are present.
+        sig_events_df_specific_baseline, error_sig_sb = analyze_significant_event_types(
+            mock_features_with_events,
+            mock_anomaly_labels, # Using anomaly labels that have -1 and 1
+            event_feature_prefix="evt_count_",
+            at_risk_label=-1,
+            baseline_label=1
+        )
+        if error_sig_sb:
+            print(f"Error in significant event analysis (anomalous vs specific baseline): {error_sig_sb}")
+        else:
+            print("\nSignificant Events (Anomalous [-1] vs. Baseline [1]):\n", sig_events_df_specific_baseline)
+
+        # Test case 3: Using cluster labels (e.g. cluster 0 vs cluster 1)
+        if 'mock_cluster_labels' in locals() and mock_cluster_labels.nunique() > 1:
+            # Make one event type more prevalent in cluster 0
+            cluster_0_indices = mock_cluster_labels[mock_cluster_labels == 0].index
+            mock_features_with_events.loc[cluster_0_indices, 'evt_count_Warning_Y'] += 5
+
+            sig_events_clusters_df, error_sig_c = analyze_significant_event_types(
+                mock_features_with_events,
+                mock_cluster_labels,
+                event_feature_prefix="evt_count_",
+                at_risk_label=0, # Cluster 0 as at-risk
+                baseline_label=1  # Cluster 1 as baseline
+            )
+            if error_sig_c:
+                print(f"Error in significant event analysis (cluster 0 vs cluster 1): {error_sig_c}")
+            else:
+                print("\nSignificant Events (Cluster 0 vs. Cluster 1):\n", sig_events_clusters_df)
+
+            # Test case 4: Cluster 0 vs all other clusters
+            sig_events_clusters_df_vs_rest, error_sig_c_rest = analyze_significant_event_types(
+                mock_features_with_events,
+                mock_cluster_labels,
+                event_feature_prefix="evt_count_",
+                at_risk_label=0, # Cluster 0 as at-risk
+                baseline_label=None # All other clusters as baseline
+            )
+            if error_sig_c_rest:
+                print(f"Error in significant event analysis (cluster 0 vs rest): {error_sig_c_rest}")
+            else:
+                print("\nSignificant Events (Cluster 0 vs. Rest of Clusters):\n", sig_events_clusters_df_vs_rest)
+        else:
+            print("\nSkipping cluster-based significant event tests: not enough distinct clusters or labels not available.")
+    else:
+        print("\nSkipping significant event type analysis: mock event data not available.")
 
 
 # --- New Significant Event Types Function ---
@@ -376,21 +541,18 @@ def analyze_significant_event_types(
     baseline_label: any = None
 ):
     """
-    Analyzes event types to identify those significantly associated with an at-risk group compared to a baseline group.
+    Analyzes event types to identify those significantly associated with an at-risk group.
 
     Args:
-        all_device_features_df_with_event_features (pd.DataFrame): DataFrame containing device features,
-                                                                  including event count columns.
-        result_labels (pd.Series): Series indicating the group label for each device (e.g., cluster ID, anomaly label).
-        event_feature_prefix (str): Prefix to identify event count columns (e.g., "evt_count_").
-        at_risk_label (any): The label value identifying the 'at-risk' group.
-        baseline_label (any, optional): The label value identifying the 'baseline' group.
-                                        If None, baseline is all devices not in the 'at-risk' group.
+        all_device_features_df_with_event_features (pd.DataFrame): DataFrame with features and event counts.
+        result_labels (pd.Series): Series with group labels for each device.
+        event_feature_prefix (str): Prefix to identify event count columns.
+        at_risk_label (any): The label for the 'at-risk' group.
+        baseline_label (any, optional): The label for the 'baseline' group. If None, all other devices are the baseline.
 
     Returns:
-        pd.DataFrame: DataFrame with analysis results (lift, p-value, counts) for each event type,
-                      sorted by lift (descending).
-        str: Error message if an issue occurred, None otherwise.
+        pd.DataFrame: A DataFrame with analysis results (lift, p-value, etc.) for each event type.
+        str: An error message if an issue occurred, otherwise None.
     """
     if not isinstance(all_device_features_df_with_event_features, pd.DataFrame) or \
        not isinstance(result_labels, pd.Series):

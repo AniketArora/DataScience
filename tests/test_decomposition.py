@@ -43,3 +43,23 @@ def test_decompose_time_series_no_period_no_freq():
     result, error = decompose_time_series(s)
     assert result is None
     assert "Series frequency is not set. Please specify a 'period'" in error
+
+from unittest.mock import patch
+
+def test_decompose_time_series_not_a_series():
+    result, error = decompose_time_series([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14])
+    assert result is None
+    assert "Input is not a pandas Series" in error
+
+def test_decompose_time_series_empty_series():
+    s = pd.Series([], dtype=float, index=pd.to_datetime([]))
+    result, error = decompose_time_series(s)
+    assert result is None
+    assert "Input series is empty" in error
+
+@patch('src.analysis_modules.decomposition.seasonal_decompose')
+def test_decompose_time_series_general_exception(mock_seasonal_decompose, sample_series_decomposition):
+    mock_seasonal_decompose.side_effect = Exception("A wild error appears!")
+    result, error = decompose_time_series(sample_series_decomposition, period=7)
+    assert result is None
+    assert "Time series decomposition failed: A wild error appears!" in error
