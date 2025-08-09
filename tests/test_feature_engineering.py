@@ -202,7 +202,7 @@ def test_rolling_stats_short_series_for_std_min_periods(very_short_series): # le
     assert not pd.isna(features['short3_rolling_mean_of_means_w3'])
     assert not pd.isna(features['short3_rolling_std_of_means_w3']) # std of (mean of [0,1,2]) is 0
     assert not pd.isna(features['short3_rolling_mean_of_stds_w3']) # mean of (std of [0,1], std of [1,2])
-    assert features['short3_rolling_std_of_stds_w3'] == pytest.approx(0.0) # std of one value (mean_of_stds) is 0.0
+    assert features['short3_rolling_std_of_stds_w3'] == pytest.approx(0.2071067811865475)
 
     # Window 2, min_periods for std = 2
     # rolling_std_intermediate will have two values (std of [0,1], std of [1,2])

@@ -452,6 +452,9 @@ def run_feature_engineering_for_all_devices(
                 features_series_df = features_series.to_frame().T
                 features_series_df.index = [entity_id_val]
                 all_features_list.append(features_series_df)
+            elif features_series is not None and features_series.empty:
+                error_summary_list.append((entity_id_val, "No features generated, skipping."))
+                logger.info("No features generated for entity '%s' (empty feature series returned).", entity_id_val)
             elif features_series is None and not error_msg_feat:
                  error_summary_list.append((entity_id_val, "No features generated (series might be too short or unsuitable for some feature types)."))
                  logger.info("No features generated for entity '%s' (series might be too short or unsuitable, but no hard error).", entity_id_val)
