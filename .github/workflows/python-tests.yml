@@ -30,7 +30,8 @@ jobs:
       id: pytest
       run: |
         export PYTHONPATH=${{ github.workspace }}
-        pytest
+        # Run pytest, save output to a file, and also print to console. Preserve exit code.
+        pytest 2>&1 | tee pytest_output.log; exit ${PIPESTATUS[0]}
       # Continue on error so the next step can create an issue
       continue-on-error: true
 
@@ -41,6 +42,11 @@ jobs:
         {
           echo "The unit tests failed. Please investigate."
           echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo ""
+          echo "## Pytest Output:"
+          echo "\`\`\`"
+          cat pytest_output.log || echo "pytest_output.log not found or empty."
+          echo "\`\`\`"
         } > .github/ISSUE_BODY.md
 
     - name: Create Issue from File on Test Failure
