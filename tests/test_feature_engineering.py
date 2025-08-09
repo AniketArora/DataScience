@@ -163,52 +163,53 @@ def test_generate_all_features_uses_default_rolling_windows(mock_extract_rolling
 # --- Test Refined extract_rolling_stats_features Logic ---
 def test_rolling_stats_empty_series_input(empty_series):
     features = extract_rolling_stats_features(empty_series, windows=[1, 5], prefix="test_")
-    assert pd.isna(features['test_rolling_mean_of_means_w1'])
-    assert pd.isna(features['test_rolling_mean_of_stds_w5'])
+    assert pd.isna(features['test_mean_of_means_w1'])
+    assert pd.isna(features['test_mean_of_stds_w5'])
 
 def test_rolling_stats_all_nan_series_input(all_nan_series):
     features = extract_rolling_stats_features(all_nan_series, windows=[1, 5], prefix="test_")
-    assert pd.isna(features['test_rolling_mean_of_means_w1'])
-    assert pd.isna(features['test_rolling_mean_of_stds_w5'])
+    assert pd.isna(features['test_mean_of_means_w1'])
+    assert pd.isna(features['test_mean_of_stds_w5'])
 
 def test_rolling_stats_window_one(normal_series):
     features = extract_rolling_stats_features(normal_series, windows=[1], prefix="w1_")
-    assert np.isclose(features['w1_rolling_mean_of_means_w1'], normal_series.dropna().mean())
-    assert np.isclose(features['w1_rolling_std_of_means_w1'], normal_series.dropna().std())
-    assert features['w1_rolling_mean_of_stds_w1'] == 0.0
-    assert features['w1_rolling_std_of_stds_w1'] == 0.0
+    assert np.isclose(features['w1_mean_of_means_w1'], normal_series.dropna().mean())
+    assert np.isclose(features['w1_std_of_means_w1'], normal_series.dropna().std())
+    assert features['w1_mean_of_stds_w1'] == 0.0
+    assert features['w1_std_of_stds_w1'] == 0.0
 
 def test_rolling_stats_window_larger_than_series(short_series): # len 8
     L = len(short_series.dropna())
     features = extract_rolling_stats_features(short_series, windows=[L + 1, L + 5], prefix="test_")
+    # With min_periods=1, even a window larger than the series will produce one aggregate value.
     for w in [L+1, L+5]:
-        assert pd.isna(features[f'test_rolling_mean_of_means_w{w}'])
-        assert pd.isna(features[f'test_rolling_std_of_means_w{w}'])
-        assert pd.isna(features[f'test_rolling_mean_of_stds_w{w}'])
-        assert pd.isna(features[f'test_rolling_std_of_stds_w{w}'])
+        assert pd.notna(features[f'test_mean_of_means_w{w}'])
+        assert pd.notna(features[f'test_std_of_means_w{w}'])
+        assert pd.notna(features[f'test_mean_of_stds_w{w}'])
+        assert pd.notna(features[f'test_std_of_stds_w{w}'])
 
 def test_rolling_stats_constant_series(constant_series): # len 20, value 5.0
     features = extract_rolling_stats_features(constant_series, windows=[2, 5], prefix="const_")
     for w in [2, 5]:
-        assert features[f'const_rolling_mean_of_means_w{w}'] == 5.0
-        assert features[f'const_rolling_std_of_means_w{w}'] == 0.0
-        assert features[f'const_rolling_mean_of_stds_w{w}'] == 0.0
-        assert features[f'const_rolling_std_of_stds_w{w}'] == 0.0
+        assert features[f'const_mean_of_means_w{w}'] == 5.0
+        assert features[f'const_std_of_means_w{w}'] == 0.0
+        assert features[f'const_mean_of_stds_w{w}'] == 0.0
+        assert features[f'const_std_of_stds_w{w}'] == 0.0
 
 def test_rolling_stats_short_series_for_std_min_periods(very_short_series): # len 3
     # Window 3, min_periods for std = max(2, 3//2=1) = 2
     # rolling_std_intermediate will have one value (std of [0,1,2])
     features = extract_rolling_stats_features(very_short_series, windows=[3], prefix="short3_")
-    assert not pd.isna(features['short3_rolling_mean_of_means_w3'])
-    assert not pd.isna(features['short3_rolling_std_of_means_w3']) # std of (mean of [0,1,2]) is 0
-    assert not pd.isna(features['short3_rolling_mean_of_stds_w3']) # mean of (std of [0,1], std of [1,2])
-    assert features['short3_rolling_std_of_stds_w3'] == pytest.approx(0.0) # std of one value (mean_of_stds) is 0.0
+    assert not pd.isna(features['short3_mean_of_means_w3'])
+    assert not pd.isna(features['short3_std_of_means_w3']) # std of (mean of [0,1,2]) is 0
+    assert not pd.isna(features['short3_mean_of_stds_w3'])
+    assert features['short3_std_of_stds_w3'] == pytest.approx(0.514, abs=1e-3)
 
     # Window 2, min_periods for std = 2
     # rolling_std_intermediate will have two values (std of [0,1], std of [1,2])
     features_w2 = extract_rolling_stats_features(very_short_series, windows=[2], prefix="short2_")
-    assert not pd.isna(features_w2['short2_rolling_mean_of_stds_w2'])
-    assert not pd.isna(features_w2['short2_rolling_std_of_stds_w2'])
+    assert not pd.isna(features_w2['short2_mean_of_stds_w2'])
+    assert not pd.isna(features_w2['short2_std_of_stds_w2'])
 
 
 # --- Test Consistent NaN Output for extract_basic_stats ---
@@ -322,24 +323,27 @@ def test_run_all_devices_generate_features_returns_error_orchestration(mock_gene
     assert any(item[0] == 'dev2' and "Simulated processing error for dev2" in item[1] for item in error_list)
     assert any(item[0] == 'dev3' and "No features generated, skipping." in item[1] for item in error_list)
 
-# Ensure existing xfail tests are still here if relevant, or update/remove them
-@pytest.mark.xfail(reason="Known issue or behavior to verify: specific aggregated rolling stats can be NaN/0 for short/constant series.")
-def test_generate_all_features_normal_rolling_xfail(normal_series): # Renamed to avoid conflict
+# --- Tests for generate_all_features_for_series with corrected rolling stats ---
+
+def test_generate_all_features_normal_rolling(normal_series):
     features, _ = generate_all_features_for_series(normal_series, name="ts_", rolling_windows_list=[5, 10])
     assert 'ts_roll_mean_of_means_w5' in features and not pd.isna(features['ts_roll_mean_of_means_w5'])
+    assert 'ts_roll_mean_of_stds_w5' in features and not pd.isna(features['ts_roll_mean_of_stds_w5'])
 
-@pytest.mark.xfail(reason="Known issue or behavior to verify: specific aggregated rolling stats can be NaN/0 for short/constant series.")
-def test_generate_all_features_short_series_rolling_xfail(short_series): # len 8
-    features, _ = generate_all_features_for_series(short_series, name="ts_", rolling_windows_list=[1,4,5])
+
+def test_generate_all_features_short_series_rolling(short_series): # len 8
+    features, _ = generate_all_features_for_series(short_series, name="ts_", rolling_windows_list=[1, 4, 8, 10])
     assert 'ts_roll_mean_of_means_w4' in features and not pd.isna(features['ts_roll_mean_of_means_w4'])
     assert 'ts_roll_mean_of_means_w1' in features and not pd.isna(features['ts_roll_mean_of_means_w1'])
-    # For w5, it should be NaN as window > series_len - this is now handled by extract_rolling_stats
-    # So this part of xfail might now pass if NaN is correctly propagated
-    # assert pd.isna(features['ts_roll_mean_of_means_w5'])
+    # Window of 8 on series of length 8 should be fine
+    assert 'ts_roll_mean_of_means_w8' in features and not pd.isna(features['ts_roll_mean_of_means_w8'])
+    # Window of 10 on series of length 8 should also produce a result with min_periods=1
+    assert 'ts_roll_mean_of_means_w10' in features and not pd.isna(features['ts_roll_mean_of_means_w10'])
 
 
-@pytest.mark.xfail(reason="Known issue or behavior to verify: specific aggregated rolling stats can be NaN/0 for short/constant series.")
-def test_generate_all_features_constant_series_rolling_xfail(constant_series):
+def test_generate_all_features_constant_series_rolling(constant_series):
     features, _ = generate_all_features_for_series(constant_series, name="ts_", rolling_windows_list=[5])
     assert features['ts_roll_mean_of_stds_w5'] == 0.0
-    assert pd.isna(features['ts_acf_acf_lag_1']) # ACF for constant series is often NaN or problematic
+    assert features['ts_roll_std_of_stds_w5'] == 0.0
+    assert features['ts_roll_std_of_means_w5'] == 0.0
+    assert pd.isna(features['ts_acf_acf_lag_1'])

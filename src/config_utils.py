@@ -53,12 +53,14 @@ def _set_nested_session_state(key_path_str, value):
     obj = st.session_state
     try:
         for key in keys[:-1]:
-            if key not in obj or not isinstance(obj.get(key), dict): # Use .get for safety
-                obj[key] = {}
-            obj = obj[key]
+            sub_obj = obj.get(key)
+            if not isinstance(sub_obj, dict):
+                sub_obj = {}
+                obj[key] = sub_obj
+            obj = sub_obj
         obj[keys[-1]] = value
         return True
-    except (KeyError, TypeError, AttributeError): # Added AttributeError for safety
+    except (KeyError, TypeError, AttributeError):
         return False
 
 
