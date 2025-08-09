@@ -286,6 +286,17 @@ class ClusteringAnalysisModule(AnalysisModuleInterface):
         }
 
     def render_parameters_ui(self, st_object: Any, current_values: Dict[str, Any], module_key: str) -> Dict[str, Any]:
+        """
+        Renders the UI for selecting clustering parameters.
+
+        Args:
+            st_object (Any): The Streamlit object (e.g., st or st.sidebar) to render the UI on.
+            current_values (Dict[str, Any]): A dictionary of current parameter values.
+            module_key (str): A unique key for the module to prevent widget state issues.
+
+        Returns:
+            Dict[str, Any]: A dictionary of updated parameter values.
+        """
         # In a real scenario, this would render Streamlit widgets
         # For now, just return current_values or defaults to satisfy interface
         # This part is heavily UI dependent and would be built out in main.py or similar
@@ -343,6 +354,20 @@ class ClusteringAnalysisModule(AnalysisModuleInterface):
 
 
     def run_analysis(self, data: pd.DataFrame, params: Dict[str, Any], session_state: Dict[str, Any]) -> Tuple[Any, Optional[str]]:
+        """
+        Executes the selected clustering algorithm on the provided data.
+
+        Args:
+            data (pd.DataFrame): The feature DataFrame for clustering.
+            params (Dict[str, Any]): A dictionary of parameters for the analysis,
+                                     including the clustering method and its specific settings.
+            session_state (Dict[str, Any]): The Streamlit session state. Not used in this module.
+
+        Returns:
+            Tuple[Any, Optional[str]]: A tuple containing the clustering results
+                                       (a dictionary with labels, model, etc.) and an
+                                       optional error message string.
+        """
         logger.info(f"Running {self.get_name()} with method {params.get('method')}")
         method = params.get("method", "K-Means")
 
@@ -388,6 +413,14 @@ class ClusteringAnalysisModule(AnalysisModuleInterface):
 
 
     def render_results(self, st_object: Any, results: Any, session_state: Dict[str, Any]) -> None:
+        """
+        Renders the results of the clustering analysis.
+
+        Args:
+            st_object (Any): The Streamlit object to render the results on.
+            results (Any): The results from the run_analysis method.
+            session_state (Dict[str, Any]): The Streamlit session state. Not used in this module.
+        """
         # In a real scenario, this would render Streamlit charts/tables for the results
         # This part is heavily UI dependent and would be built out in main.py or similar
         st_object.write(f"Results for {self.get_name()}:")

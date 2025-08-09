@@ -166,3 +166,55 @@ def test_analyze_event_correlations_empty_inputs():
     assert "Input DataFrame or labels Series is empty" in err; assert df is None
     df, err = analyze_event_correlations(pd.DataFrame({'A':[1]}), pd.Series([],dtype='int'))
     assert "Input DataFrame or labels Series is empty" in err; assert df is None
+
+# --- More detailed tests for explainability functions ---
+
+def test_get_cluster_feature_summary_error_cases(sample_features_for_explainability, sample_cluster_labels):
+    features, cluster_labels = sample_features_for_explainability, sample_cluster_labels
+
+    # Not a series/dataframe
+    _, error = get_cluster_feature_summary(features.values, cluster_labels)
+    assert "Inputs must be pandas DataFrame and Series" in error
+
+    # Empty dataframe
+    _, error = get_cluster_feature_summary(pd.DataFrame(), cluster_labels)
+    assert "Input DataFrame or labels Series is empty" in error
+
+    # Mismatched index
+    _, error = get_cluster_feature_summary(features, cluster_labels.reset_index(drop=True))
+    assert "must have the same index" in error
+
+    # No numeric features
+    non_numeric_df = pd.DataFrame({'a': ['x', 'y'], 'b': ['z', 'w']}, index=['d1', 'd2'])
+    labels = pd.Series([0, 1], index=non_numeric_df.index)
+    _, error = get_cluster_feature_summary(non_numeric_df, labels)
+    assert "No numeric features found" in error
+
+from src.analysis_modules.explainability import analyze_significant_event_types
+
+def test_analyze_significant_event_types(features_with_events_for_corr):
+    df_with_events, anomaly_labels_for_events = features_with_events_for_corr
+
+    # Test anomalous vs all others
+    sig_df, error = analyze_significant_event_types(
+        df_with_events, anomaly_labels_for_events, "evt_count_", at_risk_label=-1
+    )
+    assert error is None
+    assert sig_df is not None
+    assert not sig_df.empty
+    assert 'lift' in sig_df.columns
+    assert 'p_value' in sig_df.columns
+
+    # Test anomalous vs specific baseline
+    sig_df, error = analyze_significant_event_types(
+        df_with_events, anomaly_labels_for_events, "evt_count_", at_risk_label=-1, baseline_label=1
+    )
+    assert error is None
+    assert sig_df is not None
+
+    # Test error cases
+    _, error = analyze_significant_event_types(pd.DataFrame(), pd.Series([], dtype=int), "evt_count_", -1)
+    assert "Input DataFrame or labels Series is empty" in error
+
+    _, error = analyze_significant_event_types(df_with_events, anomaly_labels_for_events, "evt_count_", at_risk_label=100)
+    assert "No devices found for the at-risk label" in error

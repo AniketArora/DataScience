@@ -41,17 +41,18 @@ def detect_anomalies_zscore(series: pd.Series, threshold=3, window=None):
         logger.warning(msg)
         return None, None, msg
 
-    try:
-        if window:
-            if not isinstance(window, int) or window <= 0:
-                msg = "Window must be a positive integer."
+    if window is not None:
+        if not isinstance(window, int) or window <= 0:
+            msg = "Window must be a positive integer."
+            logger.warning(msg)
+            return None, None, msg
+        if window >= len(series_cleaned):
+                msg = f"Window size ({window}) is too large for the series length ({len(series_cleaned)})."
                 logger.warning(msg)
                 return None, None, msg
-            if window >= len(series_cleaned):
-                 msg = f"Window size ({window}) is too large for the series length ({len(series_cleaned)})."
-                 logger.warning(msg)
-                 return None, None, msg
 
+    try:
+        if window:
             rolling_mean = series_cleaned.rolling(window=window, center=True, min_periods=1).mean()
             rolling_std = series_cleaned.rolling(window=window, center=True, min_periods=1).std()
 

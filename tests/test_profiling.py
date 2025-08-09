@@ -67,3 +67,39 @@ def test_perform_stationarity_test_all_nan_series():
     results = perform_stationarity_test(pd.Series([np.nan, np.nan], dtype=float))
     assert "error" in results
     assert results["error"] == "Series is empty after dropping NaN values. Cannot perform ADF test."
+
+# --- More Error and Edge Case Tests ---
+
+def test_get_series_summary_stats_error_cases():
+    # Not a series
+    summary = get_series_summary_stats([1, 2, 3])
+    assert summary.empty
+
+    # Empty series
+    s_empty = pd.Series([], dtype=float)
+    summary = get_series_summary_stats(s_empty)
+    assert summary['mode'].iloc[0] == 'N/A'
+
+def test_get_missing_values_summary_error_cases():
+    # Not a series
+    summary = get_missing_values_summary([1, 2, 3])
+    assert summary.empty
+
+    # Empty series
+    s_empty = pd.Series([], dtype=float)
+    summary = get_missing_values_summary(s_empty)
+    assert summary[summary['Metric'] == 'Missing Percentage (%)']['Value'].iloc[0] == "0.00%"
+    assert summary[summary['Metric'] == 'Total Count']['Value'].iloc[0] == 0
+
+def test_perform_stationarity_test_error_cases():
+    # Not a series
+    results = perform_stationarity_test([1, 2, 3])
+    assert "Input is not a pandas Series" in results['error']
+
+from unittest.mock import patch
+
+@patch('src.analysis_modules.profiling.adfuller')
+def test_perform_stationarity_test_exception(mock_adfuller, sample_series_profiling):
+    mock_adfuller.side_effect = Exception("ADF Error")
+    results = perform_stationarity_test(sample_series_profiling)
+    assert "ADF test failed: ADF Error" in results['error']
