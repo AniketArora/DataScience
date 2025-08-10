@@ -17,3 +17,11 @@ dependencies = [
     "streamlit>=1.48.0",
     "webdriver-manager>=4.0.2",
 ]
+
+[tool.uv]
+dev-dependencies = [
+    "pre-commit==3.8.0",
+]
+
+[tool.bandit]
+exclude_dirs = ["tests"]

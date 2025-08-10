@@ -27,6 +27,20 @@ This project aims to provide a flexible and user-friendly tool for analyzing dat
 
 (Instructions on how to set up and run the project will be added here once the initial development is complete.)
 
+## Development
+
+### Code Quality with Pre-commit
+
+This project uses `pre-commit` hooks to ensure code is clean and consistent. The hooks will automatically check and format your code before you commit.
+
+To use the hooks, you first need to install them:
+
+```bash
+pre-commit install
+```
+
+Now, every time you commit, the hooks will run. If they modify any files, you'll need to `git add` those files and commit again.
+
 ## How to Launch
 
 To launch the project, first set up the environment and install the dependencies using `uv`:

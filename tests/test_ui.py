@@ -1,18 +1,14 @@
 import pytest
-import subprocess
-import sys
-import time
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
 from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 
 # Define a timeout for the Streamlit app launch and page load
-APP_LAUNCH_TIMEOUT = 90  # Increased seconds for Streamlit to start (Not used in this simplified version)
-PAGE_LOAD_TIMEOUT = 30 # Increased seconds for page elements to appear (Not used in this simplified version)
-STREAMLIT_APP_URL = "http://localhost:8501" # Default Streamlit port (Not used in this simplified version)
+APP_LAUNCH_TIMEOUT = (
+    90  # Increased seconds for Streamlit to start (Not used in this simplified version)
+)
+PAGE_LOAD_TIMEOUT = 30  # Increased seconds for page elements to appear (Not used in this simplified version)
+STREAMLIT_APP_URL = "http://localhost:8501"  # Default Streamlit port (Not used in this simplified version)
 
 # @pytest.fixture(scope="module")
 # def streamlit_server():
@@ -115,9 +111,10 @@ STREAMLIT_APP_URL = "http://localhost:8501" # Default Streamlit port (Not used i
 #    print(f"Streamlit server STDERR after termination:\n{stderr}")
 # #     print("Streamlit server torn down.")
 
+
 @pytest.fixture(scope="function")
 # def browser(streamlit_server): # Temporarily remove streamlit_server dependency
-def browser(): # No streamlit_server dependency
+def browser():  # No streamlit_server dependency
     """
     Fixture to initialize and quit the Selenium WebDriver for each test function.
     """
@@ -125,21 +122,29 @@ def browser(): # No streamlit_server dependency
     # Setup Chrome options for headless execution if needed (e.g., in CI)
     chrome_options = webdriver.ChromeOptions()
     chrome_options.add_argument("--headless")  # Run headless
-    chrome_options.add_argument("--no-sandbox") # Bypass OS security model, REQUIRED for Docker/CI
-    chrome_options.add_argument("--disable-dev-shm-usage") # Overcome limited resource problems
-    chrome_options.add_argument("--disable-gpu") # Applicable to windows os only
-    chrome_options.add_argument("window-size=1920x1080") # Set window size
+    chrome_options.add_argument(
+        "--no-sandbox"
+    )  # Bypass OS security model, REQUIRED for Docker/CI
+    chrome_options.add_argument(
+        "--disable-dev-shm-usage"
+    )  # Overcome limited resource problems
+    chrome_options.add_argument("--disable-gpu")  # Applicable to windows os only
+    chrome_options.add_argument("window-size=1920x1080")  # Set window size
 
     try:
-        driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=chrome_options)
+        driver = webdriver.Chrome(
+            service=ChromeService(ChromeDriverManager().install()),
+            options=chrome_options,
+        )
     except Exception as e:
         pytest.fail(f"Failed to initialize WebDriver: {e}")
 
-    yield driver # Provide the driver to the test
+    yield driver  # Provide the driver to the test
 
     print("Tearing down Selenium WebDriver...")
     driver.quit()
     print("Selenium WebDriver torn down.")
+
 
 def test_webdriver_initialization_only(browser):
     """
@@ -152,15 +157,20 @@ def test_webdriver_initialization_only(browser):
 
     # Optionally, try a very simple browser action that doesn't need a live server
     try:
-        browser.get("data:,") # Load a blank page
+        browser.get("data:,")  # Load a blank page
         print(f"Current URL after loading blank page: {browser.current_url}")
-        assert "data:," in browser.current_url, "Browser did not navigate to blank page."
+        assert (
+            "data:," in browser.current_url
+        ), "Browser did not navigate to blank page."
         print("WebDriver successfully loaded a blank page.")
     except Exception as e:
-        pytest.fail(f"WebDriver failed during simple operation (loading blank page): {e}")
+        pytest.fail(
+            f"WebDriver failed during simple operation (loading blank page): {e}"
+        )
+
 
 if __name__ == "__main__":
     # For manual execution of this specific test file
     # Note: You might need to handle ChromeDriver path manually if not using pytest fixtures here.
     # Example: pytest tests/test_ui.py
-    pytest.main([__file__, "-s", "-v"]) # -s for stdout, -v for verbose
+    pytest.main([__file__, "-s", "-v"])  # -s for stdout, -v for verbose
