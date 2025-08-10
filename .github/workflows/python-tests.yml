@@ -36,8 +36,8 @@ jobs:
       id: pytest
       run: |
         export PYTHONPATH=${{ github.workspace }}
-        # Run pytest, save output to a file, and also print to console. Preserve exit code.
-        pytest 2>&1 | tee pytest_output.log; exit ${PIPESTATUS[0]}
+        # Run pytest within the uv-managed environment
+        uv run pytest 2>&1 | tee pytest_output.log; exit ${PIPESTATUS[0]}
       # Continue on error so the next step can create an issue
       continue-on-error: true
 
