@@ -377,15 +377,21 @@ def analyze_event_correlations(
         event_analysis_df = pd.concat([event_analysis_df, overall_mean_events.to_frame().T])
 
         new_index_names = {}
+        is_anomaly_labels = set(labels_aligned.unique()).issubset({-1, 1, 0})
+
         for label_val in event_analysis_df.index:
-            if label_val == "Overall_Mean": new_index_names[label_val] = "Overall_Mean_Events"
-            elif label_val == -1: new_index_names[label_val] = "Anomalous_Mean_Events"
-            elif label_val == 1 and set(labels_aligned.unique()).issubset({-1,1,0}):
-                 new_index_names[label_val] = "Normal_Mean_Events"
-            else: new_index_names[label_val] = f"Cluster_{label_val}_Mean_Events"
+            if label_val == "Overall_Mean":
+                new_index_names[label_val] = "Overall_Mean_Events"
+            elif is_anomaly_labels:
+                if label_val == -1:
+                    new_index_names[label_val] = "Anomalous_Mean_Events"
+                elif label_val == 1:
+                    new_index_names[label_val] = "Normal_Mean_Events"
+            else:
+                new_index_names[label_val] = f"Cluster_{label_val}_Mean_Events"
         event_analysis_df = event_analysis_df.rename(index=new_index_names)
 
-        return event_analysis_df.T, None
+        return event_analysis_df, None
     except Exception as e:
         logger.error("Error during event correlation analysis: %s", e, exc_info=True)
         return None, f"Error during event correlation analysis: {e}"

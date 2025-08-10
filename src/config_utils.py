@@ -54,9 +54,11 @@ def _set_nested_session_state(key_path_str, value):
     try:
         for key in keys[:-1]:
             sub_obj = obj.get(key)
-            if not isinstance(sub_obj, dict):
+            if sub_obj is None:
                 sub_obj = {}
                 obj[key] = sub_obj
+            elif not isinstance(sub_obj, dict):
+                return False # Path is blocked by a non-dict item
             obj = sub_obj
         obj[keys[-1]] = value
         return True
