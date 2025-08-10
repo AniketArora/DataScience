@@ -116,3 +116,29 @@ Project dependencies are managed in `pyproject.toml`.
 - **Do not add business logic** directly to `src/main.py`. Place it in the appropriate module in `src/analysis_modules/`.
 - **Do not ignore UI verification.** Changes to the frontend must be tested.
 - **Do not modify build artifacts** directly. Always change the source files.
+
+## 10. Code Quality and Pre-commit Hooks
+
+This project uses `pre-commit` to enforce code quality and consistency automatically before commits are made. The hooks are configured in `.pre-commit-config.yaml` and primarily use `ruff` for linting and formatting.
+
+### Installation
+
+After setting up the environment with `uv sync`, you must install the pre-commit hooks into your local `.git` directory:
+
+```bash
+pre-commit install
+```
+
+This only needs to be done once per clone of the repository.
+
+### Usage
+
+Once installed, the pre-commit hooks will run automatically every time you run `git commit`. If a hook modifies a file (e.g., `ruff-format` reformats your code), the commit will be aborted. You should then review the changes, `git add` the modified files, and run `git commit` again.
+
+You can also run the hooks manually on all files at any time:
+
+```bash
+pre-commit run --all-files
+```
+
+This is useful for cleaning up the entire repository or after pulling new changes.
