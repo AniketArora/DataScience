@@ -21,7 +21,7 @@ This project aims to provide a flexible and user-friendly tool for analyzing dat
 *   `data/`: Directory for sample datasets.
 *   `tests/`: Directory for unit tests.
 *   `notebooks/`: Jupyter notebooks for exploratory data analysis and experimentation.
-*   `requirements.txt`: Project dependencies.
+*   `pyproject.toml`: Project dependencies and configuration.
 
 ## Getting Started (Placeholder)
 
@@ -29,7 +29,20 @@ This project aims to provide a flexible and user-friendly tool for analyzing dat
 
 ## How to Launch
 
-To launch the project, ensure you have all dependencies installed from `requirements.txt` and then run the following command in your terminal:
+To launch the project, first set up the environment and install the dependencies using `uv`:
+
+```bash
+# Create a virtual environment
+uv venv
+
+# Activate the virtual environment
+source .venv/bin/activate
+
+# Install dependencies
+uv sync
+```
+
+Then, run the following command in your terminal:
 
 ```bash
 streamlit run src/main.py

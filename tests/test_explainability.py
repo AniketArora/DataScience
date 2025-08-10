@@ -9,7 +9,8 @@ from src.analysis_modules.explainability import (
     generate_cluster_summary_text,
     generate_anomaly_summary_text,
     explain_anomalies_with_surrogate_model,
-    analyze_event_correlations # Added import
+    analyze_event_correlations,
+    analyze_significant_event_types
 )
 
 # --- Fixtures for existing tests ---
