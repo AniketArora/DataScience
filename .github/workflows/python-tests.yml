@@ -35,7 +35,7 @@ jobs:
     - name: Test with pytest
       id: pytest
       run: |
-        export PYTHONPATH=${{ github.workspace }}/src
+        export PYTHONPATH=${{ github.workspace }}
         # Run pytest within the uv-managed environment
         uv run pytest 2>&1 | tee pytest_output.log; exit ${PIPESTATUS[0]}
       # Continue on error so the next step can create an issue
