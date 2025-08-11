@@ -5,6 +5,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 @st.cache_data
 def get_series_summary_stats(series: pd.Series):
     """Calculates basic descriptive statistics for a time series."""
@@ -13,13 +14,27 @@ def get_series_summary_stats(series: pd.Series):
         return pd.DataFrame()
 
     summary = series.describe().to_frame().T
-    summary['median'] = series.median()
-    summary['mode'] = series.mode().iloc[0] if not series.mode().empty else 'N/A' # Handle multiple modes or no mode
+    summary["median"] = series.median()
+    summary["mode"] = (
+        series.mode().iloc[0] if not series.mode().empty else "N/A"
+    )  # Handle multiple modes or no mode
     # Reorder to make it a bit more standard
-    cols_order = ['count', 'mean', 'std', 'min', '25%', '50%', 'median', '75%', 'max', 'mode']
+    cols_order = [
+        "count",
+        "mean",
+        "std",
+        "min",
+        "25%",
+        "50%",
+        "median",
+        "75%",
+        "max",
+        "mode",
+    ]
     # Filter out any columns not present (e.g., if describe() changes for some Series types)
     summary = summary[[col for col in cols_order if col in summary.columns]]
     return summary
+
 
 @st.cache_data
 def get_missing_values_summary(series: pd.Series):
@@ -31,11 +46,14 @@ def get_missing_values_summary(series: pd.Series):
     missing_count = series.isnull().sum()
     missing_percentage = (missing_count / len(series)) * 100 if len(series) > 0 else 0
 
-    summary_df = pd.DataFrame({
-        'Metric': ['Total Count', 'Missing Count', 'Missing Percentage (%)'],
-        'Value': [len(series), missing_count, f"{missing_percentage:.2f}%"]
-    })
+    summary_df = pd.DataFrame(
+        {
+            "Metric": ["Total Count", "Missing Count", "Missing Percentage (%)"],
+            "Value": [len(series), missing_count, f"{missing_percentage:.2f}%"],
+        }
+    )
     return summary_df
+
 
 @st.cache_data
 def perform_stationarity_test(series: pd.Series, significance_level=0.05):
@@ -75,23 +93,31 @@ def perform_stationarity_test(series: pd.Series, significance_level=0.05):
             "p-value": p_value,
             "Critical Values": critical_values,
             "Interpretation": interpretation,
-            "Is Stationary (at chosen alpha)": p_value <= significance_level
+            "Is Stationary (at chosen alpha)": p_value <= significance_level,
         }
     except Exception as e:
-        logger.error("ADF test failed for series %s: %s", series.name if series.name else "Unnamed", e, exc_info=True)
-        return {
-            "error": f"ADF test failed: {e}"
-        }
+        logger.error(
+            "ADF test failed for series %s: %s",
+            series.name if series.name else "Unnamed",
+            e,
+            exc_info=True,
+        )
+        return {"error": f"ADF test failed: {e}"}
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     # Example Usage (for testing the module directly)
-    data = [i + (i*0.1) + (i%5) for i in range(100)] # Sample data with some pattern
+    data = [
+        i + (i * 0.1) + (i % 5) for i in range(100)
+    ]  # Sample data with some pattern
     non_stationary_series = pd.Series(data)
 
     # Add some NaNs
     non_stationary_series.iloc[[5, 15, 25]] = None
 
-    stationary_series = pd.Series([1,2,1,2,1,3,1,2,1,3,1,2,1,3,1,2,1,3,1,2,1,3,1,2,1,3])
+    stationary_series = pd.Series(
+        [1, 2, 1, 2, 1, 3, 1, 2, 1, 3, 1, 2, 1, 3, 1, 2, 1, 3, 1, 2, 1, 3, 1, 2, 1, 3]
+    )
 
     print("--- Summary Statistics ---")
     print(get_series_summary_stats(non_stationary_series))

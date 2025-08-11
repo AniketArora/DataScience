@@ -2,12 +2,15 @@ import psycopg2
 import pandas as pd
 import streamlit as st
 import logging
-from typing import Optional, List, Tuple, Union # Added for type hinting
+from psycopg2 import sql
 
 logger = logging.getLogger(__name__)
 
+
 @st.cache_resource(max_entries=5)
-def connect_postgres(db_config: dict) -> Tuple[Optional[psycopg2.extensions.connection], Optional[str]]:
+def connect_postgres(
+    db_config: dict,
+) -> tuple[psycopg2.extensions.connection | None, str | None]:
     """
     Connects to a PostgreSQL database.
 
@@ -25,8 +28,11 @@ def connect_postgres(db_config: dict) -> Tuple[Optional[psycopg2.extensions.conn
         logger.error("Error connecting to PostgreSQL: %s", e, exc_info=True)
         return None, f"Error connecting to PostgreSQL: {e}"
 
+
 @st.cache_data(max_entries=10)
-def get_schemas_postgres(conn: psycopg2.extensions.connection) -> Tuple[Optional[List[str]], Optional[str]]:
+def get_schemas_postgres(
+    conn: psycopg2.extensions.connection,
+) -> tuple[list[str] | None, str | None]:
     """
     Retrieves a list of schema names from the PostgreSQL database.
 
@@ -48,8 +54,11 @@ def get_schemas_postgres(conn: psycopg2.extensions.connection) -> Tuple[Optional
         logger.error("Error retrieving schemas: %s", e, exc_info=True)
         return None, f"Error retrieving schemas: {e}"
 
+
 @st.cache_data(max_entries=10)
-def get_tables_postgres(conn: psycopg2.extensions.connection, schema_name: str) -> Tuple[Optional[List[str]], Optional[str]]:
+def get_tables_postgres(
+    conn: psycopg2.extensions.connection, schema_name: str
+) -> tuple[list[str] | None, str | None]:
     """
     Retrieves a list of table names from a specific schema in the PostgreSQL database.
 
@@ -74,13 +83,19 @@ def get_tables_postgres(conn: psycopg2.extensions.connection, schema_name: str) 
             tables = [row[0] for row in cur.fetchall()]
         return tables, None
     except psycopg2.Error as e:
-        logger.error("Error retrieving tables for schema '%s': %s", schema_name, e, exc_info=True)
+        logger.error(
+            "Error retrieving tables for schema '%s': %s", schema_name, e, exc_info=True
+        )
         return None, f"Error retrieving tables for schema '{schema_name}': {e}"
+
 
 @st.cache_data(max_entries=10)
 def fetch_data_postgres(
-    conn: psycopg2.extensions.connection, schema_name: str, table_name: str, limit: Optional[int] = None
-) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
+    conn: psycopg2.extensions.connection,
+    schema_name: str,
+    table_name: str,
+    limit: int | None = None,
+) -> tuple[pd.DataFrame | None, str | None]:
     """
     Fetches data from a table in a specific schema in the PostgreSQL database.
 
@@ -103,17 +118,30 @@ def fetch_data_postgres(
 
     try:
         with conn.cursor() as cur:
-            query = f'SELECT * FROM "{schema_name}"."{table_name}"'
+            query = sql.SQL("SELECT * FROM {}.{}").format(
+                sql.Identifier(schema_name), sql.Identifier(table_name)
+            )
+            params = []
             if limit is not None:
                 if not isinstance(limit, int) or limit < 0:
-                    return None, "Invalid limit provided. Limit must be a non-negative integer."
-                query += f" LIMIT {limit}"
-            query += ";"
-            cur.execute(query)
+                    return (
+                        None,
+                        "Invalid limit provided. Limit must be a non-negative integer.",
+                    )
+                query += sql.SQL(" LIMIT %s")
+                params.append(limit)
+
+            cur.execute(query, params if params else None)
             colnames = [desc[0] for desc in cur.description]
             data = cur.fetchall()
             df = pd.DataFrame(data, columns=colnames)
         return df, None
     except psycopg2.Error as e:
-        logger.error("Error fetching data from table '%s.%s': %s", schema_name, table_name, e, exc_info=True)
+        logger.error(
+            "Error fetching data from table '%s.%s': %s",
+            schema_name,
+            table_name,
+            e,
+            exc_info=True,
+        )
         return None, f"Error fetching data from table '{schema_name}.{table_name}': {e}"

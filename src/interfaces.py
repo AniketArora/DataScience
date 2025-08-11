@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 import pandas as pd
-from typing import Any, Dict, Tuple, Optional # For type hinting
+from typing import Any  # For type hinting
+
 
 class AnalysisModuleInterface(ABC):
     """
@@ -27,7 +28,7 @@ class AnalysisModuleInterface(ABC):
         pass
 
     @abstractmethod
-    def get_parameter_definitions(self) -> Dict[str, Dict[str, Any]]:
+    def get_parameter_definitions(self) -> dict[str, dict[str, Any]]:
         """
         Returns a dictionary defining the parameters the module requires.
 
@@ -58,7 +59,9 @@ class AnalysisModuleInterface(ABC):
         pass
 
     @abstractmethod
-    def render_parameters_ui(self, st_object: Any, current_values: Dict[str, Any], module_key: str) -> Dict[str, Any]:
+    def render_parameters_ui(
+        self, st_object: Any, current_values: dict[str, Any], module_key: str
+    ) -> dict[str, Any]:
         """
         Renders Streamlit input widgets for the module's parameters.
 
@@ -81,7 +84,9 @@ class AnalysisModuleInterface(ABC):
         pass
 
     @abstractmethod
-    def run_analysis(self, data: pd.DataFrame, params: Dict[str, Any], session_state: Dict[str, Any]) -> Tuple[Any, Optional[str]]:
+    def run_analysis(
+        self, data: pd.DataFrame, params: dict[str, Any], session_state: dict[str, Any]
+    ) -> tuple[Any, str | None]:
         """
         Performs the core analysis logic of the module.
 
@@ -107,7 +112,9 @@ class AnalysisModuleInterface(ABC):
         pass
 
     @abstractmethod
-    def render_results(self, st_object: Any, results: Any, session_state: Dict[str, Any]) -> None:
+    def render_results(
+        self, st_object: Any, results: Any, session_state: dict[str, Any]
+    ) -> None:
         """
         Renders the analysis results using Streamlit components.
 
@@ -120,6 +127,7 @@ class AnalysisModuleInterface(ABC):
                                             (e.g., for contextual information or comparison data).
         """
         pass
+
 
 # Example of how a concrete class might use this (for illustration, not part of the file)
 # class MySpecificAnalysis(AnalysisModuleInterface):
