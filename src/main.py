@@ -265,7 +265,7 @@ if app_mode == "Guided Workflows":
             try:
                 selected_at_risk_clusters_wf.append(int(s_cluster))
             except ValueError:
-                try:
+                try
                     selected_at_risk_clusters_wf.append(int(float(s_cluster)))
                 except ValueError:
                     st.error(f"Could not parse cluster label: {s_cluster}")

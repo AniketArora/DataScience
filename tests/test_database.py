@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 import pandas as pd
 import psycopg2  # Import for psycopg2.Error
+from psycopg2 import sql
 
 # Assuming your database.py file is in src directory and src is in PYTHONPATH
 from src.database import (
