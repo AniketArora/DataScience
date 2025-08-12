@@ -459,6 +459,7 @@ class AnomalyDetectionAnalysisModule(AnalysisModuleInterface):
                 nu = params.get("ocsvm_nu", 0.05)
                 kernel = params.get("ocsvm_kernel", "rbf")
                 gamma_str = str(params.get("ocsvm_gamma", "scale"))
+                gamma_val: Any
                 try:  # Attempt to convert gamma to float if it's a number, else keep as string ('scale', 'auto')
                     gamma_val = float(gamma_str)
                 except ValueError:

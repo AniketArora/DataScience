@@ -6,6 +6,9 @@ repos:
     -   id: check-toml
     -   id: end-of-file-fixer
     -   id: trailing-whitespace
+    -   id: check-json
+    -   id: check-added-large-files
+    -   id: debug-statements
 -   repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.2
     hooks:
@@ -22,3 +25,14 @@ repos:
     hooks:
     -   id: pyupgrade
         args: [--py312-plus]
+-   repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+    -   id: detect-secrets
+        args: ["--baseline", ".secrets.baseline"]
+-   repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.41.0
+    hooks:
+    -   id: markdownlint
+        args: ["--fix"]
+        exclude: AGENTS.md|README.md

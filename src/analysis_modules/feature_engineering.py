@@ -3,6 +3,8 @@ import numpy as np
 from scipy.stats import skew, kurtosis
 from statsmodels.tsa.stattools import acf
 import logging
+from typing import Any
+
 import streamlit as st
 
 logger = logging.getLogger(__name__)
@@ -196,7 +198,7 @@ def extract_event_features_for_series(
     prefix="evt_",
     event_timestamp_col_name="timestamp",
     event_type_col_name="event_type",
-    all_possible_event_types_cleaned_names: list = None,
+    all_possible_event_types_cleaned_names: list[Any] | None = None,
     top_n_event_types=5,  # Fallback if all_possible_event_types_cleaned_names is None
 ):
     features = {}
@@ -319,13 +321,13 @@ def extract_event_features_for_series(
 def generate_all_features_for_series(
     series: pd.Series,
     name="ts_",
-    device_event_df: pd.DataFrame = None,
-    all_possible_event_types: list = None,
+    device_event_df: pd.DataFrame | None = None,
+    all_possible_event_types: list[Any] | None = None,
     event_type_col: str = "event_type",
     event_ts_col: str = "timestamp",
     top_n_event_types_to_focus=5,
-    acf_lags_list: list = None,
-    rolling_windows_list: list = None,
+    acf_lags_list: list[Any] | None = None,
+    rolling_windows_list: list[Any] | None = None,
 ):
     try:
         series_name_for_log = (
@@ -599,9 +601,11 @@ def run_feature_engineering_for_all_devices(
     event_ts_col_main_all = ts_specs_serializable.get(
         "event_timestamp_col", "timestamp"
     )
-    top_n_event_types_focus = ts_specs_serializable.get(
-        "top_n_event_types_for_series_features", 5
-    )
+    val: Any = ts_specs_serializable.get("top_n_event_types_for_series_features", 5)
+    try:
+        top_n_event_types_focus = int(val)
+    except (ValueError, TypeError):
+        top_n_event_types_focus = 5
 
     # Extract ACF lags and Rolling Windows from ts_specs_serializable, with defaults
     acf_lags_config = ts_specs_serializable.get("acf_lags", [1, 5, 10])

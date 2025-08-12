@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -561,8 +562,8 @@ def analyze_significant_event_types(
     all_device_features_df_with_event_features: pd.DataFrame,
     result_labels: pd.Series,
     event_feature_prefix: str,
-    at_risk_label: any,
-    baseline_label: any = None,
+    at_risk_label: Any,
+    baseline_label: Any = None,
 ):
     """
     Analyzes event types to identify those significantly associated with an at-risk group.

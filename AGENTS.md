@@ -6,7 +6,8 @@ This document provides instructions and guidelines for AI agents working on this
 
 This is a Python-based data analysis tool with a web frontend built using the Streamlit framework.
 
-### Key Technologies:
+### Key Technologies
+
 - **Backend:** Python
 - **Frontend:** Streamlit
 - **Data Handling:** Pandas
@@ -15,7 +16,8 @@ This is a Python-based data analysis tool with a web frontend built using the St
 - **Dependency Management:** `uv`
 - **Testing:** `pytest` (for unit tests) and Selenium (for UI tests)
 
-### Architecture:
+### Architecture
+
 - `src/main.py`: The main entry point of the Streamlit application. It handles the UI and orchestrates the analysis modules.
 - `src/analysis_modules/`: Contains individual modules for different types of data analysis (e.g., `profiling.py`, `clustering.py`). This is the primary location for adding new analysis features.
 - `src/database.py`: Handles database connections.
@@ -27,17 +29,20 @@ This is a Python-based data analysis tool with a web frontend built using the St
 
 To work on this project, you must set up a virtual environment and install the required dependencies.
 
-1.  **Create a virtual environment:**
+1. **Create a virtual environment:**
+
     ```bash
     uv venv
     ```
 
-2.  **Activate the virtual environment:**
+2. **Activate the virtual environment:**
+
     ```bash
     source .venv/bin/activate
     ```
 
-3.  **Install dependencies:**
+3. **Install dependencies:**
+
     ```bash
     uv sync
     ```
@@ -58,12 +63,14 @@ A comprehensive test suite is in place to ensure code quality. All tests must pa
 
 The test suite includes both unit and UI tests. To run all tests, execute the following commands:
 
-1.  **Set the PYTHONPATH:** The application uses absolute imports from the project root. You must set the `PYTHONPATH` to the root of the repository.
+1. **Set the PYTHONPATH:** The application uses absolute imports from the project root. You must set the `PYTHONPATH` to the root of the repository.
+
     ```bash
     export PYTHONPATH=$(pwd)
     ```
 
-2.  **Run pytest:** The CI environment uses `uv run pytest`. You should do the same.
+2. **Run pytest:** The CI environment uses `uv run pytest`. You should do the same.
+
     ```bash
     uv run pytest
     ```
@@ -82,36 +89,38 @@ The UI tests use Selenium and require a web driver. The CI workflow installs Goo
 
 To add a new analysis feature:
 
-1.  **Create a new function** in the appropriate file within `src/analysis_modules/`. If the functionality is new, you might need to create a new file (e.g., `src/analysis_modules/new_feature.py`).
-2.  **Import the new function** in `src/main.py`.
-3.  **Integrate the function** into the Streamlit UI within `src/main.py`, likely within a new tab or section.
-4.  **Add corresponding unit tests** in the `tests/` directory. For a new module `src/analysis_modules/new_feature.py`, the tests should be in `tests/test_new_feature.py`.
+1. **Create a new function** in the appropriate file within `src/analysis_modules/`. If the functionality is new, you might need to create a new file (e.g., `src/analysis_modules/new_feature.py`).
+2. **Import the new function** in `src/main.py`.
+3. **Integrate the function** into the Streamlit UI within `src/main.py`, likely within a new tab or section.
+4. **Add corresponding unit tests** in the `tests/` directory. For a new module `src/analysis_modules/new_feature.py`, the tests should be in `tests/test_new_feature.py`.
 
 ## 7. Frontend Verification
 
 Since this is a Streamlit application, any changes to the UI must be verified.
 
-1.  **Run the UI tests** located in `tests/test_ui.py`.
-2.  **Manually inspect** the application by running it locally to ensure that UI elements are rendered correctly and the application is behaving as expected.
-3.  For any significant UI change, you may be required to update the Selenium tests.
+1. **Run the UI tests** located in `tests/test_ui.py`.
+2. **Manually inspect** the application by running it locally to ensure that UI elements are rendered correctly and the application is behaving as expected.
+3. For any significant UI change, you may be required to update the Selenium tests.
 
 ## 8. Managing Dependencies
 
 Project dependencies are managed in `pyproject.toml`.
 
--   To **add a new dependency**, add it to the `dependencies` list in `pyproject.toml` and then run `uv sync`.
--   Do **not** use `pip install` directly for new dependencies, as this will not update the project's dependency list.
+- To **add a new dependency**, add it to the `dependencies` list in `pyproject.toml` and then run `uv sync`.
+- Do **not** use `pip install` directly for new dependencies, as this will not update the project's dependency list.
 
 ## 9. Do's and Don'ts
 
-### Do:
+### Do
+
 - **Write tests** for all new code.
 - **Run all tests** before submitting changes.
 - **Follow the existing modular structure.**
 - **Keep `src/main.py` focused on UI and orchestration.**
 - **Update `pyproject.toml`** when adding new dependencies.
 
-### Don't:
+### Don't
+
 - **Do not commit** code that breaks existing tests.
 - **Do not add business logic** directly to `src/main.py`. Place it in the appropriate module in `src/analysis_modules/`.
 - **Do not ignore UI verification.** Changes to the frontend must be tested.
